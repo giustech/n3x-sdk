@@ -1,0 +1,230 @@
+{
+  "meta": {
+    "system": "n3x-sdk (contratos de plugin, kit de testes e plugin de exemplo)",
+    "hld_owner": "Guilherme Giusti",
+    "version": "1.1",
+    "date": "2026-10-20"
+  },
+  "objective": {
+    "technical_goal": "Definir os contratos Go estáveis que todo plugin implementa (metade de proxy e metade de controller), sem cgo e sem depender do Envoy nem do host, além do kit de testes, do plugin de exemplo, do gerador de plugins e da documentação para autores. Dono das interfaces de plugin, das oito fases, das políticas de falha, do padrão de IDs, do manifesto n3x-plugin.yaml, dos widgets do painel, da memória isolada, do schema da config, do pacote secret, das regras da análise estática e da política de versionamento. Cobre FR-012, FR-013 e FR-014.",
+    "problems_addressed": [
+      "Plugins não podem quebrar quando o SDK Go do Envoy, sem versões com tag, muda",
+      "Plugin testável sem Envoy e sem controller",
+      "Isolamento entre plugins (memória, token, namespace gRPC e rotas) garantido pelo contrato",
+      "Caminho quente com 0 alocações e até 5 cruzamentos Envoy→Go por requisição",
+      "Visual, acessibilidade e segurança iguais em todas as telas de plugin, sem autor escrevendo HTML",
+      "Três formatos de ID e três arquivos chamados n3x.yaml nos documentos anteriores"
+    ],
+    "linked_systems": [
+      "n3x-sidecar: implementa o contrato de proxy e usa plugin/ e secret/",
+      "n3x-controller: implementa o contrato de controller e usa controller/ui e secret/",
+      "n3x-builder: confere a faixa sdk, gera schema e registro e aplica a análise estática",
+      "n3x-plugin-core: primeiro cliente e único dono das capacidades privilegiadas",
+      "Plugins futuros em repositórios próprios (ex.: giustech.ratelimit)",
+      "grpc-go, protobuf e buf"
+    ]
+  },
+  "architecture": {
+    "topology_overview": "Biblioteca Go sem runtime próprio, num único módulo github.com/giustech/n3x-sdk publicado por tag semver (ADR-011), com os pacotes plugin/, proxy/, controller/, controller/ui, memory/, secret/, sdktest/, example/ e cmd/n3x-new. Roda dentro do libn3x.so (metade de proxy) e do binário do controller (metade de controller). Regras de dependência: sem cgo, sem SDK do Envoy nem pacotes internos do sidecar ou do controller, proxy/ nunca importa controller/, Echo fora do contrato e plugin sem acesso a secret/. ID <namespace>.<nome> com n3x reservado, gRPC em n3x.plugins.<namespace>.<nome>.v<major>, rotas em /plugins/<namespace>/<nome>/ e métricas com prefixo n3x_<namespace>_<nome>_ (ADR-012).",
+    "technologies": [
+      "Go 1.26 ou superior, sem cgo, com generics",
+      "grpc-go e protobuf",
+      "templ e htmx só dentro do renderizador de widgets",
+      "SVG gerado no servidor para gráficos",
+      "buf (generate e breaking) na CI dos plugins",
+      "log/slog"
+    ],
+    "deployment": "hybrid",
+    "patterns": [
+      "Plugin de duas metades, compilado estaticamente e registrado por função gerada, sem init()",
+      "Hooks e capacidades como interfaces opcionais detectadas por type assertion (ADR-015)",
+      "Config tipada por generics com schema gerado da struct (ADR-020)",
+      "Registro no estilo gRPC e net/http, com roteamento por nome",
+      "UI declarativa por árvore de widgets, no estilo do Flutter (ADR-018)",
+      "Isolamento por handle preso ao ID",
+      "Capacidades privilegiadas aceitas só do n3x.core (ADR-019); na v1, WriteAudit fica reservado para a v2, ChangePassword pode devolver ErrUnsupported e Sessions().Revoke fica sem uso (ADR-002 e ADR-003 do n3x-plugin-core)",
+      "Controller só em segundo plano e prazo obrigatório em todo I/O (ADR-016)"
+    ]
+  },
+  "components": [
+    {
+      "name": "plugin/",
+      "responsibilities": ["Validação do ID", "Fases e políticas de falha", "Leitura do n3x-plugin.yaml", "Geração do JSON Schema a partir das tags", "Decodificação estrita da config com default", "Tipo plugin.Secret"],
+      "dependencies": ["Biblioteca padrão"]
+    },
+    {
+      "name": "proxy/",
+      "responsibilities": ["Define[C](New)", "Hooks OnRequestHeaders, OnRequestBody, OnResponseHeaders e OnComplete", "Stream com path, headers, método gRPC, SetRoute até a fase route, Deny e Go()", "Negação ciente de gRPC", "Env com Controller() só em segundo plano, Background(), Dial() com prazo, clientes HTTP e TCP, Sleep(), Memory(), Metrics(), Log() e Target()", "Limites de 8 tarefas de fundo e 16 conexões por plugin"],
+      "dependencies": ["plugin/", "memory/", "grpc-go"]
+    },
+    {
+      "name": "controller/",
+      "responsibilities": ["Define[C](New)", "Capacidades Start, Stop, GRPC, Routes, Cards e Validate", "Caller(ctx)", "State() com ok e degradado", "Interfaces privilegiadas do core"],
+      "dependencies": ["plugin/", "memory/", "controller/ui", "grpc-go"]
+    },
+    {
+      "name": "controller/ui",
+      "responsibilities": ["Catálogo de widgets de layout, conteúdo e interação", "Renderizador de página inteira ou fragmento htmx", "Gráficos em SVG", "Paginação, filtros, ordenação e exportação JSON e CSV", "CSRF de Form e Action", "Acessibilidade WCAG 2.1 AA"],
+      "dependencies": ["templ (interno)"]
+    },
+    {
+      "name": "memory/",
+      "responsibilities": ["NewMap[K, V] preso ao ID", "Cota em bytes estimados (16 MiB no sidecar e 64 MiB no controller)", "Descarte do mais antigo quando a cota enche", "64 partes com trava por parte"],
+      "dependencies": ["Biblioteca padrão"]
+    },
+    {
+      "name": "secret/",
+      "responsibilities": ["ENC[v1:...] com AES-256-GCM e AAD por serviço", "Encrypt, Decrypt e KeyGen", "Proibido aos plugins"],
+      "dependencies": ["Biblioteca padrão"]
+    },
+    {
+      "name": "sdktest/",
+      "responsibilities": ["Requisição, Stream, config, métricas e logs falsos", "Agendador determinístico", "Host falso de controller", "Servidor gRPC em memória (bufconn)", "AssertHonorsCancel, AssertZeroAllocs e AssertCounter", "Alvos simulados envoy-1.40 e istio-1.31"],
+      "dependencies": ["proxy/", "controller/"]
+    },
+    {
+      "name": "example/",
+      "responsibilities": ["Plugin n3x.example com as duas metades", "Adiciona header e nega um path em HTTP e gRPC", "Envia as negações ao controller em segundo plano", "Cartão e página de negações em widgets"],
+      "dependencies": ["Pacotes de contrato do SDK"]
+    },
+    {
+      "name": "cmd/n3x-new",
+      "responsibilities": ["Cria a estrutura de um plugin a partir do example/ com ID, gRPC e rotas preenchidos", "schema-check contra a última tag na CI do plugin"],
+      "dependencies": ["plugin/"]
+    }
+  ],
+  "flows": {
+    "request_flow": [
+      "Autor: n3x-new <id> → implementa as metades → go test -race com sdktest → buf generate e buf breaking → n3x-new schema-check → tag semver",
+      "Inclusão: n3x-plugin add nos Dockerfiles do sidecar e do controller → seção do plugin nos dois n3x.yaml → redeploy",
+      "Build (n3x-builder): confere n3x-plugin.yaml e faixa sdk → gera schema das structs de types/ → gera o registro chamando agent.Plugin() e controller.Plugin() → análise estática",
+      "Subida no sidecar: por instance, decodifica a config na struct C → valida pelo schema → New(cfg, env) → detecta hooks por interface; erro impede o Envoy de subir",
+      "Requisição: Envoy → adaptador → executor → Stream do pool → hook → Continue, Deny ou Go(); dentro do Go(), Controller() devolve ErrRequestPath e Dial() usa o prazo do Go(); OnComplete no fim",
+      "Segundo plano: Background() com recover, rótulos de pprof, reinício com backoff após panic e ctx cancelado no desligamento (2 s)",
+      "Subida no controller: decodifica a seção → Validate → New → Start com prazo → GRPC, Routes e Cards, com checagem de namespace, rotas e capacidades privilegiadas",
+      "Página: host (sessão, CSRF e papel) → função da página com prazo → árvore de widgets → renderizador → página inteira ou fragmento htmx"
+    ],
+    "data_flow": [
+      "Struct Go em types/ → JSON Schema → manifesto embutido → validação, mascaramento por plugin.Secret e rótulos do painel",
+      "n3x.yaml do serviço com ENC[...] → secret/ no .so → struct tipada com plugin.Secret → New",
+      "Proxy → Background() → conexão compartilhada com token do core → serviço n3x.plugins.<namespace>.<nome>.v1 → banco do plugin",
+      "Banco do plugin → réplica de leitura → Dial() no sidecar durante a requisição (ADR-016)",
+      "Metrics() → stats do Envoy (17090) ou Prometheus do controller (17091); Log() → JSON em stderr"
+    ]
+  },
+  "data_model": {
+    "entities": [
+      "Manifesto do plugin (n3x-plugin.yaml): id, version, sdk, halves, fases permitidas, padrões de fase, order e falha, required e depends_on",
+      "Manifesto embutido: manifestos, JSON Schema de cada config, alvo e hash (formato do HLD do n3x-builder)",
+      "Config tipada: struct Go com tags json, n3x, desc e default e campos sensíveis em plugin.Secret",
+      "Instância de proxy: uma por instance do n3x.yaml do serviço",
+      "Instância de controller: uma por plugin",
+      "Identidade (Caller): papel root, leitura ou sidecar, mais usuário ou serviço e instância",
+      "Evento de auditoria (reservado para a v2): ator, ação, alvo, IP e horário",
+      "Estado do plugin: ok e degradado pelo plugin, falho só pelo host",
+      "Widget: árvore gerada a cada requisição, nunca guardada",
+      "Mapa de memória: memory.Map[K, V] preso ao ID, com cota por plugin"
+    ],
+    "relationships": [
+      "Plugin 1:1 manifesto",
+      "Plugin 1:N instâncias de proxy e 0:1 instância de controller",
+      "Plugin 0:N mapas de memória dentro da mesma cota",
+      "Plugin 0:1 serviço gRPC por major e 0:N páginas e cartões",
+      "Página 1:1 árvore de widgets por requisição"
+    ],
+    "source_of_truth": "Repositório do plugin (n3x-plugin.yaml, structs de types/ e .proto); SDK (fases, políticas, papéis, IDs e widgets); n3x.yaml do serviço e do controller (valores da config). O SDK não persiste nada. Config evolui só por adição dentro da major do plugin (n3x-new schema-check), protos com buf breaking e SDK em semver estrito desde a v1.0.0."
+  },
+  "interfaces": [
+    {"name": "proxy/", "kind": "sdk", "protocol": "API Go", "exposure": "external", "sla_limits": "0 alocações nos caminhos comuns; hooks síncronos do core e do exemplo em p50 ≤ 0,05 ms; 8 tarefas de fundo e 16 conexões por plugin"},
+    {"name": "controller/", "kind": "sdk", "protocol": "API Go", "exposure": "external", "sla_limits": "Página com o prazo do host (10 s); cartão com prazo de 1 s"},
+    {"name": "controller/ui", "kind": "sdk", "protocol": "API Go (widgets)", "exposure": "external", "sla_limits": "Tabela de 500 linhas em até 5 ms; paginação de 50 linhas; WCAG 2.1 AA"},
+    {"name": "memory/", "kind": "sdk", "protocol": "API Go", "exposure": "external", "sla_limits": "16 MiB no sidecar e 64 MiB no controller por plugin"},
+    {"name": "plugin/", "kind": "sdk", "protocol": "API Go e tags de struct", "exposure": "external", "sla_limits": "Config só evolui por adição"},
+    {"name": "secret/", "kind": "sdk", "protocol": "API Go", "exposure": "internal", "sla_limits": "Usado por sidecar, controller e builder; proibido aos plugins"},
+    {"name": "sdktest/", "kind": "sdk", "protocol": "API Go", "exposure": "external", "sla_limits": "go test -race, sem Envoy e sem controller"},
+    {"name": "n3x-plugin.yaml", "kind": "sdk", "protocol": "YAML", "exposure": "external", "sla_limits": "Validado pelo n3x-plugin add"},
+    {"name": "Convenção gRPC dos plugins", "kind": "api", "protocol": "Protobuf (n3x.plugins.<namespace>.<nome>.v<major>)", "exposure": "internal", "sla_limits": "Só por adição, com buf breaking"},
+    {"name": "n3x-new (new e schema-check)", "kind": "sdk", "protocol": "CLI", "exposure": "external", "sla_limits": "Criação e CI do plugin"}
+  ],
+  "scalability_availability": {
+    "strategies": [
+      "O SDK escala junto com o sidecar (1:1 com a aplicação) e com o controller (instância única) e não gasta o orçamento deles",
+      "Controller só em segundo plano: zero erros da aplicação causados por ele",
+      "Prazo e limite em todo I/O de plugin, transformando backend lento em política de falha aplicada",
+      "Stream reaproveitado por pool, acessores sem cópia, negações pré-montadas e métricas por handle",
+      "Limites por plugin: 8 tarefas de fundo e 16 conexões em Dial()",
+      "Reinício com backoff das tarefas de fundo após panic",
+      "Portões de CI com AssertZeroAllocs e benchmark do renderizador"
+    ],
+    "caching": "memory.Map por plugin, em 64 partes com trava por parte, Get sem alocação para tipos fixos e descarte aproximado (CLOCK) quando a cota enche",
+    "partitioning": "Paginação no servidor (50 linhas por padrão) e renderização com buffer reaproveitado para o painel ficar em p95 < 300 ms com 500 sidecars",
+    "sla_target": "Sem meta própria de uptime; herda as do sidecar e do controller. Toda chamada de plugin termina por prazo"
+  },
+  "security": {
+    "authentication": "O SDK não autentica: entrega Caller(ctx) preenchido pelo host. O token do sidecar fica só na memória do core e é anexado pelo interceptor do core (ADR-019)",
+    "authorization": "Papel mínimo por página, cartão, Form e Action (sem papel declarado, Form e Action exigem root); capacidades privilegiadas só de n3x.core vindo de github.com/giustech/n3x-plugin-core; namespace n3x reservado; gRPC e rotas fora do namespace recusados na subida; alteração de rota só até a fase route; estado falho só pelo host",
+    "secrets_management": "Segredos da config em ENC[v1:...], decifrados pelo sidecar ou pelo controller com secret/ antes do New; a chave AES nunca chega ao plugin; secret/ proibido aos plugins (ADR-014)",
+    "encryption_in_transit": "Herdada: TLS 1.3 na conexão compartilhada e no painel; conexões próprias do plugin configuradas por ele",
+    "encryption_at_rest": "ENC[...] com AES-256-GCM e AAD por serviço para valores da config; dados persistidos são responsabilidade do banco de cada plugin",
+    "pii_policy": "O SDK não trata PII. plugin.Secret mostra *** em log, fmt, JSON e erros, com .Reveal() explícito (ADR-020); renderizador escapa todo texto; CSRF automático; análise estática proíbe go cru, os.Exit, log.Fatal, init() com efeito, unsafe e reflect sobre tipos do SDK, cgo, SDK do Envoy, secret/, pacotes internos, context.Background(), chamadas bloqueantes sem ctx e .Reveal() em log"
+  },
+  "observability": {
+    "logs": "env.Log() com slog JSON e campos fixos ts, level, component=plugin, service, instance, plugin_id e request_id; plugin.Secret sempre mascarado; stack de panic amostrado em 1 por segundo por instância",
+    "metrics": [
+      "env.Metrics() com counter, gauge e histogram por handle, prefixo n3x_<namespace>_<nome>_ e rótulo instance automático, sem limite de cardinalidade (ADR-022)",
+      "n3x_plugin_duration_seconds por hook",
+      "n3x_plugin_memory_bytes",
+      "n3x_plugin_memory_evictions_total"
+    ],
+    "tracing": "Sem tracing distribuído na v1 (ADR-009 de plataforma); request_id propagado nos metadados gRPC e disponível em s.RequestID()",
+    "dashboards_alerts": [
+      "Banner por estado do plugin e cartões em widgets no painel",
+      "Alerta de descarte na memória (cota apertada)",
+      "Alerta de número de séries por plugin (cardinalidade)",
+      "Alerta de p99 por hook acima do orçamento"
+    ]
+  },
+  "risks": [
+    {"risk": "Contrato congelado na v1.0 com um erro de design", "probability": "medium", "impact": "Major nova cedo, com todos os plugins recompilados", "mitigation": ["Pré-releases v0.x validadas com o core, o exemplo e um protótipo de rate limit", "Revisão do contrato antes da tag"], "contingency_plan": "v2 com camada de compatibilidade para a v1 durante uma major"},
+    {"risk": "Goroutine de biblioteca de connector dá panic fora do recover", "probability": "medium", "impact": "Derruba o Envoy até o restart", "mitigation": ["Lista de bibliotecas aprovadas", "Teste de longa duração e de injeção de falha", "Documentação no guia do autor"], "contingency_plan": "Tirar o plugin da imagem e redeployar"},
+    {"risk": "Rótulo de métrica com cardinalidade alta", "probability": "medium", "impact": "Memória do sidecar estoura até o OOM", "mitigation": ["Documentação com exemplos certos e errados", "Alerta sobre número de séries por plugin"], "contingency_plan": "Tirar a instância do n3x.yaml e redeployar"},
+    {"risk": "Catálogo de widgets não cobre uma tela, sem escape para HTML", "probability": "medium", "impact": "Plugin espera uma minor do SDK", "mitigation": ["Telas do core feitas só com widgets antes da v1.0.0"], "contingency_plan": "Minor rápida com o widget novo"},
+    {"risk": "0 alocações difícil de manter com uma API ergonômica", "probability": "medium", "impact": "Latência do sidecar acima do orçamento", "mitigation": ["AssertZeroAllocs como portão de CI", "Handles pré-criados e respostas pré-montadas"], "contingency_plan": "Variantes de baixo nível só para o caminho quente"},
+    {"risk": "Análise estática deixa passar um contorno do isolamento", "probability": "low", "impact": "Plugin lê memória ou token de outro", "mitigation": ["Corpus de plugins maliciosos nos testes do builder", "Isolamento por handle sem acessor global"], "contingency_plan": "Corrigir a regra e remover o plugin"},
+    {"risk": "Comportamento diferente entre envoy-1.40 e istio-1.31 sob o mesmo contrato", "probability": "medium", "impact": "Plugin funciona num alvo e falha no outro", "mitigation": ["Suíte de conformidade nos dois alvos", "Capacidades ausentes informadas por Target().Has"], "contingency_plan": "Desligar o recurso naquele alvo"},
+    {"risk": "Uma pessoa para manter SDK, gerador, kit e widgets", "probability": "high", "impact": "Atrasos na v1.0.0", "mitigation": ["Gerador derivado do example/", "Catálogo de widgets enxuto"], "contingency_plan": "Adiar Tabs e Chart de barra"}
+  ],
+  "adrs_next_steps": {
+    "adrs": [
+      "ADR-011: Módulo único com pacotes por metade e regras de dependência",
+      "ADR-012: ID do plugin no formato <namespace>.<nome>",
+      "ADR-013: Manifesto n3x-plugin.yaml e gerador n3x-new",
+      "ADR-014: Pacote secret no SDK, proibido aos plugins",
+      "ADR-015: Hooks e capacidades como interfaces opcionais, com config tipada",
+      "ADR-016: Controller só em segundo plano; conexões próprias permitidas na requisição",
+      "ADR-017: Memória isolada com mapas tipados, cota e descarte do mais antigo",
+      "ADR-018: Telas de plugin como árvore de widgets, sem HTML",
+      "ADR-019: Contrato das capacidades privilegiadas do plugin core",
+      "ADR-020: Schema gerado da struct, plugin.Secret e evolução só por adição",
+      "ADR-021: Contrato estável desde a v1.0 e política de depreciação",
+      "ADR-022: Métricas com prefixo por plugin e sem limite de cardinalidade"
+    ],
+    "pending_decisions": [
+      "Lista de bibliotecas aprovadas para connectors, com o protótipo de rate limit",
+      "Lista exata de capacidades por alvo, após a prova de carga do .so no istio-1.31",
+      "Formato do manifesto embutido e do hash: HLD do n3x-builder",
+      "Resolvida: formato da config efetiva enviada ao controller, mascaramento e hash (ADR-006 do n3x-plugin-core)",
+      "Renderização interna dos widgets e tema visual do painel: LLD do controller/ui com o HLD do n3x-controller"
+    ],
+    "next_steps": [
+      "Implementar plugin/ com testes de tabela e fuzzing",
+      "Implementar proxy/ e memory/ com TDD e AssertZeroAllocs",
+      "Mover core/secret do n3x-sidecar para secret/",
+      "Implementar controller/ e controller/ui começando por Page, Column, Row, Stat, Table e Detail",
+      "Escrever sdktest, example/ com as duas metades e n3x-new",
+      "Publicar v0.1.0 e validar com o plugin core e um protótipo de rate limit",
+      "Escrever o guia do autor",
+      "Escrever o FDD/LLD do proxy/ e do renderizador de widgets"
+    ]
+  }
+}
