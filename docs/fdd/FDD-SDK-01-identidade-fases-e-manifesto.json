@@ -1,0 +1,539 @@
+{
+  "meta": {
+    "product_or_system": "n3x-sdk, pacotes plugin e yamlconv",
+    "feature_name": "Identidade do plugin, fases, políticas de falha e manifesto n3x-plugin.yaml (SDK-01)",
+    "fdd_owner": "Guilherme Giusti",
+    "version": "1.0",
+    "date": "2026-10-20"
+  },
+  "context": {
+    "technical_motivation": "O ID de um plugin aparece em seis lugares: no n3x.yaml do serviço, no n3x.yaml do controller, no nome do serviço gRPC, nas rotas do painel, nas métricas e nos logs. Os documentos anteriores usavam três formatos de ID (n3x.example/header, n3x.core e core) e três arquivos chamados n3x.yaml. O ADR-012 e o ADR-013 do n3x-sdk unificaram o formato e o nome do manifesto, mas não fixaram o comportamento verificável: a expressão regular exata, as mensagens de erro, a gramática da faixa sdk, a forma de representar uma metade de proxy sem fase e o que acontece com campos desconhecidos. Se cada repositório derivar o ID do seu jeito, o isolamento por namespace (gRPC, rotas e métricas) quebra em silêncio.",
+    "fit_with_hld": "Esta FDD especifica o núcleo do pacote plugin/ do módulo github.com/giustech/n3x-sdk (HLD do n3x-sdk, linha plugin/ de \"Componentes e responsabilidades\"). É o vocabulário base que todos os outros pacotes e repositórios importam:\n- proxy/ e o executor do sidecar usam Phase, a ordem das fases e FailurePolicy (FDDs 05 e 17)\n- controller/ e o host do controller usam o ID e as derivações de serviço gRPC e rotas para recusar registros fora do namespace (FDDs 08 e 32)\n- n3x-plugin add e n3x-plugin build leem e validam o manifesto e aplicam as regras de build (FDDs 19 e 20)\n- n3x-new gera o manifesto e o confere (FDD 14)\n- o entrypoint e o .so do sidecar validam a seção plugins do n3x.yaml contra o manifesto embutido (FDDs 15 e 22)\n- o plugin core registra o manifesto no controller (FDD 42)\n\nRastreabilidade:\n- PRD 1.5: FR-004 (oito fases e ordem inversa na resposta), FR-011 e FR-015 (ID duplicado e namespace reservado como regra de build), FR-012 (manifesto, fases permitidas, posição e política padrão), FR-013 (ID, dependências e obrigatoriedade)\n- ADRs do n3x-sdk: ADR-011, ADR-012, ADR-013, ADR-015 e ADR-021; ADR-008 do n3x-plugin-core (core sem fase)\n- Lacunas do README fechadas aqui: L-10 (formato do manifesto para metade de proxy sem fase), L-34 (convenção de escrita de caminhos com ID), L-46 (onde mora a leitura de YAML), L-47 (faixa sdk sem biblioteca de semver) e L-48 (início das partes do ID e origem do <major> gRPC)",
+    "actors": [
+      "Autor de plugin (escreve o n3x-plugin.yaml)",
+      "Builder (n3x-plugin add e checagens de build)",
+      "Sidecar e controller (validam o n3x.yaml contra o manifesto embutido)",
+      "Plugin core (envia o manifesto no registro)",
+      "Mantenedor do SDK (evolui o formato por minor)"
+    ],
+    "assumptions": [
+      "O Go 1.26 ou superior é o toolchain de todas as imagens do builder (ADR-021 do n3x-sdk)",
+      "O n3x-plugin.yaml cabe em poucos KiB; o limite de 64 KiB é folga de segurança contra entrada maliciosa (hipótese)",
+      "O manifesto embutido no .so e no binário do controller guarda o n3x-plugin.yaml inteiro em JSON, no campo plugins[].manifest (HLD do n3x-builder)"
+    ],
+    "constraints": [
+      "O pacote é uma biblioteca pura: não lê arquivos, não abre rede, não loga e não tem estado global. Ele recebe bytes JSON ou strings e devolve tipos validados ou erros com o caminho do campo. Quem lê o arquivo YAML e quem decide o que fazer com o erro é o chamador.",
+      "plugin/ usa só a biblioteca padrão (HLD do n3x-sdk), porque entra no libn3x.so e no binário do controller",
+      "Sem cgo (ADR-011 do n3x-sdk)",
+      "Contrato estável desde a v1.0.0; antes disso, pré-releases v0.x (ADR-021 do n3x-sdk)",
+      "Documentação e mensagens de erro em pt-BR; identificadores de código em inglês"
+    ]
+  },
+  "technical_objectives": [
+    {
+      "objective": "Um único parser de ID para toda a plataforma.",
+      "measure_or_invariant": "Medida: builder, sidecar, controller, plugin core e n3x-new chamam plugin.ParseID; nenhum outro repositório tem expressão regular de ID (conferido em revisão e por busca na CI)."
+    },
+    {
+      "objective": "Derivações sempre válidas no destino.",
+      "measure_or_invariant": "Invariante: para todo ID aceito, GRPCPackage(n) é um pacote proto válido, MetricPrefix() casa com ^[a-zA-Z_:][a-zA-Z0-9_:]*$ (nome de métrica do Prometheus) e RoutePrefix() é um caminho limpo. Conferido por teste de propriedade sobre o fuzzing do parser."
+    },
+    {
+      "objective": "Ida e volta sem perda.",
+      "measure_or_invariant": "Invariante: ParseID(id.String()) == id e DecodeManifest(json.Marshal(m)) == m para todo valor válido."
+    },
+    {
+      "objective": "Validação completa numa passada.",
+      "measure_or_invariant": "Medida: DecodeManifest devolve todos os problemas do manifesto de uma vez, em ordem determinística, cada um com caminho do campo, regra e texto; nunca para no primeiro."
+    },
+    {
+      "objective": "Mensagens estáveis.",
+      "measure_or_invariant": "Invariante: o código da regra (Rule) de cada problema não muda dentro da major do SDK; o texto pode melhorar em patch."
+    },
+    {
+      "objective": "Sem custo no caminho quente.",
+      "measure_or_invariant": "Medida: ParsePhase, Phase.String, Phase.CanSetRoute, Phases, ResponsePhases, ID.String, ID.Namespace e ID.Name com 0 alocações por operação (testing.AllocsPerRun)."
+    },
+    {
+      "objective": "Parse seguro contra entrada hostil.",
+      "measure_or_invariant": "Medida: fuzzing de ParseID, ParseVersion, ParseSDKRange e DecodeManifest por no mínimo 5 minutos cada na CI noturna, sem panic e sem estouro de tempo (hipótese para a duração)."
+    }
+  ],
+  "scope": {
+    "included": [
+      "Tipo plugin.ID: parse, validação, String(), partes, derivações (GRPCPackage, RoutePrefix, MetricPrefix, rótulo plugin) e checagens de posse (OwnsGRPCService, OwnsRoute)",
+      "Função plugin.CheckNamespace para o builder conferir o namespace n3x contra o caminho do módulo Go",
+      "Tipo plugin.Phase com as oito fases, ordem de requisição, ordem inversa de resposta e a informação de quais fases alteram rota, exposta como dado",
+      "Tipo plugin.FailurePolicy (open e closed) com parse e serialização",
+      "Tipos plugin.Version (semver 2.0.0) e plugin.SDKRange (faixa sdk com gramática restrita), com parser próprio só na biblioteca padrão",
+      "Struct plugin.Manifest com todos os campos do ADR-013, decodificação estrita a partir de JSON (DecodeManifest), leitura tolerante só da faixa sdk (ReadSDKRange) e validação semântica (Validate)",
+      "Representação da metade de proxy só de fundo (sem fase), caso do plugin core (L-10, parte do formato)",
+      "Tipo de erro plugin.FieldError e lista plugin.FieldErrors, com caminho, regra e texto, reaproveitados pela FDD 02 na validação de config",
+      "Convenção de escrita de caminhos de campo com chaves que contêm ponto (L-34)",
+      "Pacote auxiliar yamlconv do SDK, fora de plugin/, com a conversão de YAML para JSON usada por quem lê o n3x-plugin.yaml (L-46) (hipótese de nome e de biblioteca)"
+    ],
+    "excluded": [
+      "Config tipada, tags e geração do JSON Schema: FDD 02 (SDK-02)",
+      "plugin.Secret e ENC[...]: FDD 03 (SDK-03)",
+      "Checagem de estrutura do repositório (pastas das metades): FDD 19 (BLD-01)",
+      "Regras que dependem do conjunto de plugins (IDs e serviços duplicados, prefixos de métrica iguais, depends_on em ciclo ou faltando, faixa sdk contra a imagem, presença do core): FDD 20 (BLD-02)",
+      "Comportamento do executor por fase, grupos paralelos e aplicação da política de falha: FDD 17 (SID-03)",
+      "Quantas instâncias de uma metade só de fundo existem e quem as cria: FDDs 09 (SDK-09) e 36 (CORE-01)",
+      "Validação do campo order do n3x.yaml (usa as constantes desta FDD, mas é da FDD 15)",
+      "Gerador n3x-new: FDD 14 (SDK-14)"
+    ]
+  },
+  "detailed_flows": {
+    "main_flow": [
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 1: O chamador lê o arquivo n3x-plugin.yaml do repositório do plugin",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 2: O chamador converte YAML em JSON com yamlconv.ToJSON, que recusa múltiplos documentos, chaves repetidas, chaves que não são texto e tags explícitas (hipótese)",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 3: O chamador lê só a faixa com plugin.ReadSDKRange(json), que ignora os outros campos; se a faixa não contém o SDK da imagem, o builder já falha com N3X-B004 (recomendação para a FDD 19), antes de reclamar de um campo novo que a imagem antiga não conhece",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 4: O chamador chama plugin.DecodeManifest(json):",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 4.1: confere o tamanho (até 64 KiB) e que a raiz é um objeto",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 4.2: decodifica de forma estrita: campo desconhecido em qualquer nível vira problema unknown_field",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 4.3: converte id, version, sdk, fases e políticas pelos tipos do pacote, registrando cada falha com o caminho do campo",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 4.4: roda Manifest.Validate() com as regras semânticas (coerência de halves com os blocos, default_phase dentro de phases, faixa de default_order, metade só de fundo, depends_on)",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 4.5: devolve o Manifest ou FieldErrors com todos os problemas, na ordem dos campos do manifesto",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 5: O chamador confere o namespace reservado com plugin.CheckNamespace(m.ID, caminhoDoModulo)",
+      "Leitura do n3x-plugin.yaml pelo builder ou pelo n3x-new, passo 6: O chamador usa as derivações (GRPCPackage, RoutePrefix, MetricPrefix) para as checagens de conjunto da FDD 20 e para gerar código (FDDs 14 e 21)",
+      "Runtime, manifesto embutido, passo 1: O sidecar, o controller ou o plugin core leem o manifesto embutido (formato da FDD 22) e chamam plugin.DecodeManifest sobre cada plugins[].manifest, que já é JSON",
+      "Runtime, manifesto embutido, passo 2: O entrypoint e o .so conferem cada item de plugins do n3x.yaml contra o manifesto: phase dentro de Proxy.Phases, failure vazio cai em Proxy.DefaultFailure e order vazio cai em Proxy.DefaultOrder (regras aplicadas pela FDD 15)",
+      "Runtime, manifesto embutido, passo 3: O executor monta a cadeia com plugin.Phases() na requisição e plugin.ResponsePhases() na resposta, e só entrega SetRoute às instâncias cuja fase tem CanSetRoute() verdadeiro (FDDs 05 e 17)",
+      "Derivação no controller, passo 1: O host recebe o registro gRPC de um plugin e confere id.OwnsGRPCService(nomeCompletoDoServico); recusa na subida se for falso (FDD 32)",
+      "Derivação no controller, passo 2: O host confere cada rota com id.OwnsRoute(padrao); recusa na subida se for falso (FDDs 08 e 32)",
+      "Derivação no controller, passo 3: O SDK prefixa as métricas com id.MetricPrefix() e põe o rótulo plugin com id.String() (FDD 06)"
+    ],
+    "alternative_flows": [
+      "Manifesto com campo desconhecido: DecodeManifest devolve unknown_field com o caminho (por exemplo, proxy.default_fase). O builder informa N3X-B003 (FDD 19)",
+      "Faixa sdk que exclui o SDK da imagem: detectada por ReadSDKRange antes da decodificação estrita; o builder informa N3X-B004 com a faixa exigida e a versão disponível",
+      "Metade de proxy só de fundo (plugin core): halves contém proxy, o bloco proxy existe e proxy.phases é a lista vazia []. Nesse caso default_phase, default_order e default_failure precisam estar ausentes, e Manifest.BackgroundOnly() devolve verdadeiro. O plugin não pode aparecer com phase no n3x.yaml do serviço, porque não há fase permitida. Quem cria a instância é decidido nas FDDs 09 e 36",
+      "Plugin só de controller: halves: [controller], sem bloco proxy; o bloco controller pode faltar e assume required: false e depends_on: []",
+      "Plugin só de proxy: halves: [proxy], sem bloco controller; um bloco controller presente é erro block_unexpected",
+      "ID no namespace n3x vindo de módulo de fora de github.com/giustech/: CheckNamespace devolve reserved_namespace; o builder informa N3X-B007 (FDD 20)",
+      "Entrada hostil (arquivo enorme, aninhamento profundo, texto não UTF-8): recusada com size ou syntax, sem panic"
+    ],
+    "diagrams": [
+      "mermaid\n%% Sequência da leitura do manifesto no n3x-plugin add (o comportamento do builder é da FDD 19; aqui só a ordem das chamadas ao SDK):\nsequenceDiagram\n    participant B as n3x-plugin add\n    participant Y as yamlconv\n    participant P as plugin/\n    B->>B: lê n3x-plugin.yaml do módulo\n    B->>Y: ToJSON(yaml)\n    Y-->>B: json ou erro de sintaxe\n    B->>P: ReadSDKRange(json)\n    P-->>B: SDKRange\n    B->>B: range.Contains(sdkDaImagem)? senão N3X-B004\n    B->>P: DecodeManifest(json)\n    P-->>B: Manifest ou FieldErrors (N3X-B003)\n    B->>P: CheckNamespace(m.ID, módulo)\n    P-->>B: nil ou reserved_namespace (N3X-B007)",
+      "mermaid\n%% Ordem das fases na requisição e na resposta:\nflowchart LR\n    subgraph Requisição\n    A1[access] --> A2[authn] --> A3[route] --> A4[authz] --> A5[traffic] --> A6[transform] --> A7[upstream] --> A8[observe]\n    end\n    subgraph Resposta\n    R8[observe] --> R7[upstream] --> R6[transform] --> R5[traffic] --> R4[authz] --> R3[route] --> R2[authn] --> R1[access]\n    end\n%% CanSetRoute() é verdadeiro só para access, authn e route."
+    ]
+  },
+  "public_contracts": [
+    {
+      "name": "Contrato 1: plugin.ID",
+      "kind": "sdk",
+      "signature_or_route": "package plugin\n\ntype ID struct{ /* valor comparável; guarda o texto inteiro e a posição do ponto */ }\n\nfunc ParseID(s string) (ID, error)\nfunc MustParseID(s string) ID                    // para constantes e testes; panic se inválido\nfunc (id ID) String() string                     // \"giustech.ratelimit\"; 0 alocações\nfunc (id ID) Namespace() string                  // \"giustech\"; 0 alocações\nfunc (id ID) Name() string                       // \"ratelimit\"; 0 alocações\nfunc (id ID) IsZero() bool\nfunc (id ID) GRPCPackage(major int) string       // \"n3x.plugins.giustech.ratelimit.v1\"; panic se major < 1\nfunc (id ID) OwnsGRPCService(fullName string) bool\nfunc (id ID) RoutePrefix() string                // \"/plugins/giustech/ratelimit/\"\nfunc (id ID) OwnsRoute(pattern string) bool\nfunc (id ID) MetricPrefix() string               // \"n3x_giustech_ratelimit_\"\nfunc (id ID) MarshalText() ([]byte, error)\nfunc (id *ID) UnmarshalText(b []byte) error\n\nfunc CheckNamespace(id ID, modulePath string) error\n\nconst (\n    ReservedNamespace    = \"n3x\"\n    OfficialModulePrefix = \"github.com/giustech/\"\n)\n\n// Identidade do plugin core (acréscimo pedido pela FDD 09; contrato 1 dela)\nconst CoreModule = \"github.com/giustech/n3x-plugin-core\"\n\nfunc CoreID() ID                                 // n3x.core; função, não variável; 0 alocações\nfunc IsCoreOrigin(id ID, module string) bool",
+      "request_example": {
+        "ParseID": "giustech.ratelimit",
+        "GRPCPackage": 1
+      },
+      "response_example": {
+        "String": "giustech.ratelimit",
+        "Namespace": "giustech",
+        "Name": "ratelimit",
+        "GRPCPackage": "n3x.plugins.giustech.ratelimit.v1",
+        "RoutePrefix": "/plugins/giustech/ratelimit/",
+        "MetricPrefix": "n3x_giustech_ratelimit_",
+        "OwnsGRPCService(\"n3x.plugins.giustech.ratelimit.v1.RateLimit\")": true,
+        "OwnsGRPCService(\"n3x.plugins.giustech.other.v1.RateLimit\")": false
+      },
+      "headers_semantics": [
+        "Formato: <namespace>.<nome>, exatamente um ponto. Cada parte casa com ^[a-z][a-z0-9_]{1,31}$: começa com letra minúscula (L-48, exigido por pacote proto), tem de 2 a 32 caracteres e usa só letras minúsculas, dígitos e _ (ADR-012)",
+        "GRPCPackage(major): n3x.plugins.<namespace>.<nome>.v<major>. O <major> é a major do pacote .proto do plugin, independente da version do plugin (L-48). Um plugin pode subir de major por mudança de config sem renomear o pacote gRPC, e o proto só muda de major quando quebra o contrato gRPC",
+        "OwnsGRPCService(nome): verdadeiro se nome tem a forma n3x.plugins.<namespace>.<nome>.v<N>.<Servico>, com N inteiro maior ou igual a 1 sem zero à esquerda e <Servico> sem ponto. Exemplo: n3x.plugins.n3x.core.v1.Core pertence a n3x.core",
+        "RoutePrefix(): /plugins/<namespace>/<nome>/",
+        "OwnsRoute(padrao): verdadeiro se padrao começa com RoutePrefix() e não tem segmento . ou .., barra dupla, %, ? nem #",
+        "MetricPrefix(): n3x_<namespace>_<nome>_; o rótulo plugin é sempre id.String() (ADR-012 e ADR-022)",
+        "CoreID() e IsCoreOrigin (definidos pela FDD 09, que é a dona da regra de origem das capacidades privilegiadas): IsCoreOrigin é verdadeiro se, e só se, id == CoreID() e module é exatamente CoreModule ou CoreModule + \"/v<N>\" com N inteiro maior ou igual a 2, sem zero à esquerda; comparação sensível a maiúsculas, sem normalizar",
+        "Derivação de referência conferida em teste golden, ID n3x.core: GRPCPackage(1) = n3x.plugins.n3x.core.v1, RoutePrefix() = /plugins/n3x/core/, MetricPrefix() = n3x_n3x_core_",
+        "Derivação de referência conferida em teste golden, ID n3x.example: GRPCPackage(1) = n3x.plugins.n3x.example.v1, RoutePrefix() = /plugins/n3x/example/, MetricPrefix() = n3x_n3x_example_",
+        "Derivação de referência conferida em teste golden, ID giustech.ratelimit: GRPCPackage(1) = n3x.plugins.giustech.ratelimit.v1, RoutePrefix() = /plugins/giustech/ratelimit/, MetricPrefix() = n3x_giustech_ratelimit_"
+      ],
+      "status_semantics": [
+        "O texto de entrada não é normalizado: maiúsculas, espaços nas pontas e hífen são erro, não são convertidos",
+        "CheckNamespace: se o namespace é n3x e o caminho do módulo não começa com github.com/giustech/ (comparação exata, sensível a maiúsculas), devolve um erro com FieldError{Path: \"id\", Rule: \"reserved_namespace\"} que satisfaz errors.Is(err, ErrReservedNamespace) (embrulho do contrato 6)",
+        "IDs recusados de referência: Giustech.ratelimit (maiúscula), giustech-ratelimit (sem ponto), giustech.rate-limit (hífen), g.ratelimit (parte com 1 caractere), giustech.1ratelimit (parte começa com dígito), giustech._x (parte começa com _), a.b.c (dois pontos), parte com 33 caracteres."
+      ],
+      "limits": {
+        "payload_size": "ID com no máximo 65 caracteres (32 + 1 + 32)"
+      }
+    },
+    {
+      "name": "Contrato 2: plugin.Phase",
+      "kind": "sdk",
+      "signature_or_route": "type Phase uint8\n\nconst (\n    PhaseAccess Phase = iota + 1\n    PhaseAuthn\n    PhaseRoute\n    PhaseAuthz\n    PhaseTraffic\n    PhaseTransform\n    PhaseUpstream\n    PhaseObserve\n)\n\nconst NumPhases = 8\n\nfunc ParsePhase(s string) (Phase, error)   // \"access\" ... \"observe\"; 0 alocações\nfunc (p Phase) String() string             // 0 alocações; \"\" para o valor zero\nfunc (p Phase) Valid() bool\nfunc (p Phase) CanSetRoute() bool          // access, authn e route\nfunc Phases() [NumPhases]Phase             // ordem da requisição; cópia por valor, 0 alocações\nfunc ResponsePhases() [NumPhases]Phase     // ordem inversa, para a resposta\nfunc (p Phase) MarshalText() ([]byte, error)\nfunc (p *Phase) UnmarshalText(b []byte) error",
+      "request_example": {
+        "ParsePhase": "transform"
+      },
+      "response_example": {
+        "Phase": 6,
+        "String": "transform",
+        "CanSetRoute": false
+      },
+      "headers_semantics": [
+        "O valor numérico segue a ordem da requisição, então a < b significa \"a roda antes de b\" na requisição",
+        "O valor zero não é fase válida; serve para \"não informado\"",
+        "A lista de fases que alteram rota é exposta como dado (CanSetRoute), usado pelo contrato de proxy (FDD 05), pelo executor (FDD 17) e pelo kit de testes (FDD 07)"
+      ],
+      "versioning": "As oito fases são fixas na major: acrescentar, remover ou reordenar fase exige major nova do SDK"
+    },
+    {
+      "name": "Contrato 3: plugin.FailurePolicy",
+      "kind": "sdk",
+      "signature_or_route": "type FailurePolicy uint8\n\nconst (\n    FailOpen   FailurePolicy = iota + 1 // \"open\": a cadeia segue\n    FailClosed                          // \"closed\": 503 em HTTP ou UNAVAILABLE em gRPC\n)\n\nfunc ParseFailurePolicy(s string) (FailurePolicy, error)\nfunc (f FailurePolicy) String() string\nfunc (f FailurePolicy) Valid() bool\nfunc (f FailurePolicy) MarshalText() ([]byte, error)\nfunc (f *FailurePolicy) UnmarshalText(b []byte) error",
+      "request_example": {
+        "ParseFailurePolicy": "closed"
+      },
+      "response_example": {
+        "FailurePolicy": 2,
+        "String": "closed"
+      },
+      "headers_semantics": [
+        "o valor zero significa \"não informado\" e, no n3x.yaml, cai no default_failure do manifesto. O que cada política faz em runtime é do executor (FDDs 17 e 18); este tipo só nomeia"
+      ]
+    },
+    {
+      "name": "Contrato 4: plugin.Version e plugin.SDKRange",
+      "kind": "sdk",
+      "signature_or_route": "type Version struct {\n    Major, Minor, Patch uint64\n    Pre                 string // sem o \"-\"; vazio se não for pré-release\n    Build               string // sem o \"+\"; ignorado na comparação\n}\n\nfunc ParseVersion(s string) (Version, error)   // semver 2.0.0, sem prefixo \"v\"\nfunc (v Version) String() string\nfunc (v Version) Compare(o Version) int        // precedência do semver 2.0.0\n\ntype SDKRange struct{ /* limites inferior e superior */ }\n\nfunc ParseSDKRange(s string) (SDKRange, error)\nfunc (r SDKRange) Contains(v Version) bool\nfunc (r SDKRange) Lower() Version\nfunc (r SDKRange) Upper() Version\nfunc (r SDKRange) String() string             // forma canônica \">=X.Y.Z <A.B.C\"",
+      "request_example": {
+        "ParseSDKRange": ">=1.0.0 <2.0.0",
+        "Contains": [
+          "1.4.2",
+          "2.0.0-rc.1",
+          "0.9.0"
+        ]
+      },
+      "response_example": {
+        "String": ">=1.0.0 <2.0.0",
+        "Contains": {
+          "1.4.2": true,
+          "2.0.0-rc.1": false,
+          "0.9.0": false
+        }
+      },
+      "headers_semantics": [
+        "Parser próprio só com a biblioteca padrão (L-47)",
+        "version do manifesto: semver 2.0.0 estrito, sem v, sem zero à esquerda",
+        "Gramática aceita da faixa: exatamente >=<versão> <<versão>, com um espaço entre os dois comparadores. Não há ||, ^, ~, curingas, = nem <= (hipótese: gramática restrita de propósito, porque toda faixa útil de SDK cabe nela)",
+        "O limite superior não tem pré-release nem build",
+        "O limite inferior precisa ser menor que o superior",
+        "A faixa não pode atravessar uma major: com major inferior maior ou igual a 1, o superior é no máximo <major+1>.0.0; com major 0, no máximo 0.<minor+1>.0, porque na série v0.x uma minor pode quebrar (ADR-021)",
+        "Contains(v): v maior ou igual ao inferior pela precedência do semver, e MAJOR.MINOR.PATCH de v, sem a pré-release, menor que o superior. Assim 2.0.0-rc.1 fica fora de <2.0.0 e 1.3.0-rc.1 fica dentro de >=1.0.0 <2.0.0"
+      ],
+      "status_semantics": [
+        "Faixas recusadas de referência: ^1.0.0, >=1.0.0, >=1.0.0 <3.0.0 (atravessa major), >=0.3.0 <1.0.0 (atravessa minor da série 0), >=2.0.0 <1.0.0, >=1.0 <2.0, >= 1.0.0 < 2.0.0."
+      ]
+    },
+    {
+      "name": "Contrato 5: plugin.Manifest, DecodeManifest e ReadSDKRange",
+      "kind": "sdk",
+      "signature_or_route": "type Half string\n\nconst (\n    HalfProxy      Half = \"proxy\"\n    HalfController Half = \"controller\"\n)\n\ntype Manifest struct {\n    ID         ID                  `json:\"id\"`\n    Version    Version             `json:\"version\"`\n    SDK        SDKRange            `json:\"sdk\"`\n    Halves     []Half              `json:\"halves\"`\n    Proxy      *ProxyManifest      `json:\"proxy,omitempty\"`\n    Controller *ControllerManifest `json:\"controller,omitempty\"`\n}\n\ntype ProxyManifest struct {\n    Phases         []Phase       `json:\"phases\"`                    // [] = metade só de fundo\n    DefaultPhase   Phase         `json:\"default_phase,omitempty\"`\n    DefaultOrder   *int          `json:\"default_order,omitempty\"`\n    DefaultFailure FailurePolicy `json:\"default_failure,omitempty\"`\n}\n\ntype ControllerManifest struct {\n    Required  bool `json:\"required\"`\n    DependsOn []ID `json:\"depends_on\"`\n}\n\nconst (\n    MinOrder        = 0\n    MaxOrder        = 1000\n    MaxManifestSize = 64 << 10\n    MaxDependsOn    = 32\n)\n\nfunc DecodeManifest(data []byte) (Manifest, error) // JSON estrito + Validate\nfunc ReadSDKRange(data []byte) (SDKRange, error)   // lê só \"sdk\", tolera o resto\nfunc (m Manifest) Validate() error                 // regras semânticas; FieldErrors\nfunc (m Manifest) Has(h Half) bool\nfunc (m Manifest) BackgroundOnly() bool            // metade de proxy sem fase",
+      "request_example": {
+        "manifesto do plugin core, já convertido de YAML para JSON": "json\n{\n  \"id\": \"n3x.core\",\n  \"version\": \"1.0.0\",\n  \"sdk\": \">=1.0.0 <2.0.0\",\n  \"halves\": [\"proxy\", \"controller\"],\n  \"proxy\": { \"phases\": [] },\n  \"controller\": { \"required\": true, \"depends_on\": [] }\n}",
+        "manifesto com erros": {
+          "id": "giustech.ratelimit",
+          "version": "v1.0.0",
+          "sdk": ">=1.0.0 <2.0.0",
+          "halves": [
+            "proxy"
+          ],
+          "proxy": {
+            "phases": [
+              "traffic"
+            ],
+            "default_phase": "observe",
+            "default_order": 50,
+            "default_fase": "traffic"
+          }
+        }
+      },
+      "response_example": {
+        "manifesto do plugin core": {
+          "valid": true,
+          "BackgroundOnly": true,
+          "Has(proxy)": true,
+          "Has(controller)": true
+        },
+        "manifesto com erros, texto de err.Error() com uma linha por problema": "text\nproxy.default_fase: campo desconhecido [unknown_field]\nversion: \"v1.0.0\" não é semver 2.0.0 sem prefixo v [version_format]\nproxy.default_phase: \"observe\" não está em proxy.phases [traffic] [not_in_phases]\nproxy.default_failure: campo obrigatório quando proxy.phases não é vazio [required]"
+      },
+      "headers_semantics": [
+        "A entrada é JSON; o YAML é convertido antes pelo chamador com yamlconv (L-46). plugin/ não importa biblioteca de YAML",
+        "A serialização com encoding/json é determinística e preserva a ordem declarada das listas; é ela que vai para plugins[].manifest no manifesto embutido",
+        "MinOrder e MaxOrder valem também para o campo order do n3x.yaml do serviço (aplicado pela FDD 15) (hipótese: faixa de 0 a 1000)"
+      ],
+      "status_semantics": [
+        "Regra 1 de validação, caminho (raiz), Rule size: Entrada maior que 64 KiB",
+        "Regra 2 de validação, caminho (raiz), Rule syntax: JSON inválido ou raiz que não é objeto",
+        "Regra 3 de validação, caminho qualquer, Rule unknown_field: Campo que não existe no formato",
+        "Regra 4 de validação, caminho qualquer, Rule type: Tipo JSON errado (por exemplo, número em id)",
+        "Regra 5 de validação, caminho id, Rule required, id_format, id_part_length, id_part_start: Ausente, sem exatamente um ponto, caractere inválido, parte fora de 2 a 32, parte sem letra no início",
+        "Regra 6 de validação, caminho version, Rule required, version_format: Ausente ou fora do semver 2.0.0",
+        "Regra 7 de validação, caminho sdk, Rule required, sdk_range_format, sdk_range_bounds: Ausente, fora da gramática, inferior maior ou igual ao superior, ou atravessando major",
+        "Regra 8 de validação, caminho halves, Rule required, enum, duplicate: Ausente, vazio, valor fora de proxy e controller, valor repetido",
+        "Regra 9 de validação, caminho proxy, Rule block_missing, block_unexpected: proxy em halves sem bloco, ou bloco sem proxy em halves",
+        "Regra 10 de validação, caminho controller, Rule block_unexpected: Bloco sem controller em halves (o bloco ausente é permitido e assume os padrões)",
+        "Regra 11 de validação, caminho proxy.phases, Rule required, enum, duplicate: Chave ausente (use [] para metade só de fundo), fase desconhecida, fase repetida",
+        "Regra 12 de validação, caminho proxy.default_phase, Rule required, not_in_phases: Com fases: ausente ou fora de phases",
+        "Regra 13 de validação, caminho proxy.default_order, Rule required, range: Com fases: ausente ou fora de 0 a 1000",
+        "Regra 14 de validação, caminho proxy.default_failure, Rule required, enum: Com fases: ausente ou diferente de open e closed",
+        "Regra 15 de validação, caminho proxy.default_*, Rule background_only: Sem fases (phases: []): qualquer default_* presente",
+        "Regra 16 de validação, caminho controller.depends_on[i], Rule id_*, duplicate, self_dependency, max_items: ID inválido, repetido, igual ao próprio id, ou mais de 32 itens",
+        "Os erros saem na ordem dos campos do formato (tabela acima) e, dentro de uma lista, pelo índice. Um campo com erro de tipo ou formato não gera erros derivados (por exemplo, default_phase não é comparada com phases se phases estiver inválido)."
+      ],
+      "limits": {
+        "payload_size": "Manifesto com no máximo 64 KiB (MaxManifestSize = 64 << 10); controller.depends_on com no máximo 32 itens (MaxDependsOn)"
+      }
+    },
+    {
+      "name": "Contrato 6: plugin.FieldError e plugin.FieldErrors",
+      "kind": "sdk",
+      "signature_or_route": "type FieldError struct {\n    Path   string // caminho do campo, ex.: \"proxy.default_phase\", \"controller.depends_on[1]\"\n    Rule   string // código estável da regra, ex.: \"not_in_phases\"\n    Detail string // texto em pt-BR para pessoas\n}\n\nfunc (e FieldError) Error() string   // \"<Path>: <Detail> [<Rule>]\"\n\ntype FieldErrors []FieldError\n\nfunc (e FieldErrors) Error() string  // uma linha por FieldError\n\nvar (\n    ErrInvalidID         = errors.New(\"plugin: ID inválido\")\n    ErrInvalidManifest   = errors.New(\"plugin: manifesto inválido\")\n    ErrReservedNamespace = errors.New(\"plugin: namespace n3x reservado a github.com/giustech/\")\n)",
+      "request_example": {
+        "CheckNamespace": {
+          "id": "n3x.metrics",
+          "module": "github.com/outra-org/n3x-metrics"
+        }
+      },
+      "response_example": {
+        "Path": "id",
+        "Rule": "reserved_namespace",
+        "Detail": "namespace n3x é reservado a módulos github.com/giustech/; módulo github.com/outra-org/n3x-metrics"
+      },
+      "headers_semantics": [
+        "No manifesto, Detail pode citar o valor recebido, porque nada nele é sensível. A FDD 02 reaproveita os tipos para a config e lá o valor nunca aparece",
+        "Convenção de caminho (L-34): chave simples separada por ponto (proxy.default_phase), índice de lista entre colchetes (controller.depends_on[1]) e chave que contém ponto ou caractere fora de [a-z0-9_] entre colchetes e aspas duplas. Exemplo: a lista de usuários do core no n3x.yaml do controller se escreve plugins[\"n3x.core\"].users[0].password_hash, nunca plugins.n3x.core.users. A mesma convenção vale para documentação, mensagens de erro e logs de todos os repositórios"
+      ],
+      "status_semantics": [
+        "As funções do pacote devolvem um erro embrulhado (tipo não exportado com Unwrap() []error) que carrega a sentinela do domínio e a lista. errors.Is(err, ErrInvalidManifest) é verdadeiro para todo erro de DecodeManifest e de Validate, errors.Is(err, ErrInvalidID) para todo erro de ParseID, e errors.As(err, &fe), com var fe plugin.FieldErrors, dá a lista. FieldError e FieldErrors não têm método Is: o domínio vem só da sentinela, então um erro de config (FDD 02, ErrInvalidConfig) nunca casa com ErrInvalidManifest"
+      ],
+      "versioning": "Rule é estável na major; Detail pode mudar em patch, por isso os chamadores e os testes conferem Path e Rule, nunca o texto"
+    },
+    {
+      "name": "Contrato 7: yamlconv.ToJSON (pacote auxiliar do SDK, fora de plugin/) (hipótese de nome e de biblioteca)",
+      "kind": "sdk",
+      "signature_or_route": "package yamlconv // github.com/giustech/n3x-sdk/yamlconv\n\nfunc ToJSON(yaml []byte) ([]byte, error)",
+      "request_example": "yaml\nid: n3x.example\nversion: 1.0.0\nsdk: \">=1.0.0 <2.0.0\"\nhalves: [proxy, controller]\nproxy: { phases: [transform], default_phase: transform, default_order: 50, default_failure: open }\ncontroller: { required: false, depends_on: [] }",
+      "response_example": "json\n{\"id\":\"n3x.example\",\"version\":\"1.0.0\",\"sdk\":\">=1.0.0 <2.0.0\",\"halves\":[\"proxy\",\"controller\"],\"proxy\":{\"phases\":[\"transform\"],\"default_phase\":\"transform\",\"default_order\":50,\"default_failure\":\"open\"},\"controller\":{\"required\":false,\"depends_on\":[]}}",
+      "headers_semantics": [
+        "Converte um único documento YAML em JSON com a biblioteca go.yaml.in/yaml/v3 (hipótese), que segue o YAML 1.2 nos booleanos (yes e no continuam texto)",
+        "Existe para que builder, n3x-new e, se as FDDs 02, 15 e 30 confirmarem, o sidecar e o controller convertam YAML do mesmo jeito. O pacote não é proibido aos plugins, mas não faz parte do contrato de plugin"
+      ],
+      "status_semantics": [
+        "Recusa: mais de um documento, chave repetida no mesmo mapa, chave que não é texto, tag explícita (!!binary e outras), âncora usada mais de 100 vezes (proteção contra expansão exponencial, hipótese)",
+        "Erros são tipados e citam só linha e coluna do YAML, nunca um trecho do arquivo, porque o mesmo pacote lê o n3x.yaml, que pode ter segredo em claro (ajuste pedido pela FDD 15)"
+      ]
+    }
+  ],
+  "errors_exceptions_fallback": {
+    "error_matrix": [
+      {
+        "condition": "ID fora do formato",
+        "treatment": "ParseID devolve erro com FieldError de regra id_format, id_part_length ou id_part_start, que satisfaz errors.Is(err, ErrInvalidID)",
+        "notes": "Nunca normaliza; o autor corrige o texto"
+      },
+      {
+        "condition": "Namespace n3x fora de github.com/giustech/",
+        "treatment": "CheckNamespace devolve reserved_namespace",
+        "notes": "O builder mapeia para N3X-B007 (FDD 20)"
+      },
+      {
+        "condition": "Manifesto com JSON inválido ou maior que 64 KiB",
+        "treatment": "DecodeManifest devolve syntax ou size e não tenta mais nada",
+        "notes": "O builder mapeia para N3X-B003 (FDD 19)"
+      },
+      {
+        "condition": "Campo desconhecido",
+        "treatment": "unknown_field com o caminho; a decodificação continua para achar os outros problemas",
+        "notes": "Pega erro de digitação (default_fase)"
+      },
+      {
+        "condition": "Faixa sdk fora da gramática",
+        "treatment": "sdk_range_format em DecodeManifest e erro em ReadSDKRange",
+        "notes": "ReadSDKRange só falha se sdk estiver ausente ou inválido"
+      },
+      {
+        "condition": "Faixa sdk que exclui o SDK da imagem",
+        "treatment": "Não é erro do pacote: Contains devolve falso e o chamador decide",
+        "notes": "O builder mapeia para N3X-B004"
+      },
+      {
+        "condition": "Regras semânticas (tabela do contrato 5)",
+        "treatment": "FieldErrors com todos os problemas, na ordem do formato",
+        "notes": "Sem erros derivados de um campo já inválido"
+      },
+      {
+        "condition": "GRPCPackage com major menor que 1",
+        "treatment": "panic com mensagem clara",
+        "notes": "Erro de programação de quem chama, nunca dado de entrada"
+      },
+      {
+        "condition": "MustParseID com texto inválido",
+        "treatment": "panic",
+        "notes": "Só para constantes e testes"
+      },
+      {
+        "condition": "YAML com vários documentos, chave repetida ou tag",
+        "treatment": "yamlconv.ToJSON devolve erro com linha e coluna",
+        "notes": "Antes de chegar a plugin/"
+      }
+    ],
+    "resilience_strategies": [
+      "Limite de tamanho da entrada",
+      "Parse sem recursão ilimitada",
+      "Nenhum panic por dado de entrada (provado por fuzzing)",
+      "Nenhum estado global mutável",
+      "Timeouts, retries, backoff e circuit breaker não se aplicam, porque o pacote não faz I/O"
+    ],
+    "fallback_policy": "não há fallback silencioso. Valor inválido nunca é trocado por um padrão; só um campo ausente e opcional recebe o padrão documentado (bloco controller ausente vira required: false e depends_on: []).",
+    "invariants": [
+      "Todo ID com IsZero() falso foi validado; não existe ID inválido construído pela API pública",
+      "ParseID(id.String()) devolve o mesmo id",
+      "Phases()[i] e ResponsePhases()[NumPhases-1-i] são a mesma fase para todo i",
+      "CanSetRoute() é verdadeiro exatamente para PhaseAccess, PhaseAuthn e PhaseRoute",
+      "Manifest devolvido sem erro por DecodeManifest passa em Validate()",
+      "BackgroundOnly() verdadeiro implica Has(HalfProxy), Proxy.Phases vazio e nenhum default_* preenchido",
+      "Nenhuma função do pacote lê arquivo, variável de ambiente ou rede"
+    ]
+  },
+  "observability": {
+    "metrics": [
+      "O pacote não emite métricas. Ele define a convenção usada por todas as métricas de plugin: prefixo MetricPrefix() (n3x_<namespace>_<nome>_) e rótulo plugin com id.String() (ADR-012 e ADR-022 do n3x-sdk). Quem registra é o SDK (FDD 06), o sidecar e o controller",
+      "Na CI do SDK: relatório de cobertura do pacote e resultado dos benchmarks com -benchmem (0 alocações nas funções listadas no objetivo)"
+    ],
+    "logs": {
+      "format": "O pacote não loga. A superfície observável são os erros: FieldError com Path, Rule e Detail\n\nQuem loga deve emitir um registro por problema, com os campos path, rule e detail, além dos campos fixos do componente. Exemplo no builder (FDD 19): {\"level\":\"error\",\"code\":\"N3X-B003\",\"plugin_module\":\"github.com/giustech/n3x-plugin-ratelimit\",\"path\":\"proxy.default_phase\",\"rule\":\"not_in_phases\",\"detail\":\"\\\"observe\\\" não está em proxy.phases [traffic]\"}\n\nCaminhos escritos sempre pela convenção da seção 5 (L-34)",
+      "fields": [
+        "path: caminho do campo (Path do FieldError), escrito pela convenção da seção 5 (L-34)",
+        "rule: código estável da regra (Rule do FieldError)",
+        "detail: texto em pt-BR para pessoas (Detail do FieldError)"
+      ]
+    },
+    "tracing": {
+      "sampling": "Sem tracing (ADR-009 de plataforma). Não há spans neste pacote"
+    },
+    "dashboards_alerts": [
+      "Não se aplicam a uma biblioteca pura. O efeito operacional aparece nos alertas de quem usa o pacote (falhas de build N3X-B003, N3X-B004 e N3X-B007 na CI do operador)"
+    ]
+  },
+  "dependencies_compatibility": {
+    "dependencies": [
+      {
+        "component": "Go",
+        "min_version": "1.26",
+        "notes": "Toolchain das imagens do builder; o mínimo só sobe em minor do SDK (ADR-021)"
+      },
+      {
+        "component": "Biblioteca padrão",
+        "min_version": "(a do Go)",
+        "notes": "plugin/ importa só encoding/json, errors, strconv, strings e similares; conferido na CI com go list -deps ./plugin"
+      },
+      {
+        "component": "go.yaml.in/yaml/v3",
+        "min_version": "v3.0.4 (hipótese)",
+        "notes": "Só no pacote yamlconv, nunca em plugin/, proxy/ ou memory/"
+      },
+      {
+        "component": "n3x-builder (n3x-plugin add e build)",
+        "min_version": "consumidor",
+        "notes": "Chama ReadSDKRange, DecodeManifest, CheckNamespace e as derivações; não reimplementa regra (FDDs 19 e 20)"
+      },
+      {
+        "component": "n3x-sidecar e n3x-controller",
+        "min_version": "consumidores",
+        "notes": "Usam Phase, FailurePolicy, ID e DecodeManifest sobre o manifesto embutido (FDDs 15, 17, 22 e 32)"
+      },
+      {
+        "component": "n3x-plugin-core",
+        "min_version": "consumidor",
+        "notes": "Manifesto com metade de proxy só de fundo (FDD 36)"
+      }
+    ],
+    "compatibility_guarantees": [
+      "Semver estrito do módulo github.com/giustech/n3x-sdk desde a v1.0.0; antes disso, v0.x pode mudar este contrato (ADR-021)",
+      "As derivações do ID (GRPCPackage, RoutePrefix, MetricPrefix e rótulo plugin), a regex das partes e as oito fases ficam congeladas na major",
+      "Os códigos de regra (Rule) de FieldError não mudam na major; regra nova só entra em minor e só para campo novo",
+      "O formato do manifesto só cresce por adição de campos opcionais, em minor do SDK. Um plugin que usa um campo novo precisa declarar sdk com limite inferior na minor que trouxe o campo. Assim, uma imagem de build antiga falha com N3X-B004 (faixa) via ReadSDKRange, e não com um unknown_field confuso (recomendação para a FDD 19: conferir a faixa antes da decodificação estrita)",
+      "Valores novos de FailurePolicy só em minor; como o executor do sidecar é compilado com a mesma versão do SDK, não há descompasso em runtime",
+      "O JSON gerado de um Manifest é estável entre patches e minors (mesma entrada, mesmos bytes), exigência do build reproduzível (ADR-007 do n3x-builder)"
+    ]
+  },
+  "acceptance_criteria": [
+    "Testes de tabela de ParseID cobrem, no mínimo: os 3 IDs válidos de referência, partes com 2 e 32 caracteres (aceitas), partes com 1 e 33 caracteres (recusadas), maiúscula, hífen, espaço, ponto extra, ausência de ponto, parte começando com dígito e com _; cada caso confere Rule",
+    "Teste golden das derivações para n3x.core, n3x.example e giustech.ratelimit, incluindo n3x.plugins.n3x.core.v1 e OwnsGRPCService(\"n3x.plugins.n3x.core.v1.Core\") verdadeiro",
+    "Teste de propriedade sobre o corpus do fuzzing: todo ID aceito gera pacote proto válido (^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$), prefixo de métrica válido no Prometheus e prefixo de rota limpo; e ParseID(id.String()) == id",
+    "OwnsRoute recusa /plugins/giustech/ratelimit/../core/, /plugins/giustech/ratelimit//x, /plugins/giustech/ratelimitx/ e /plugins/giustech/ratelimit/%2e%2e/",
+    "Phases() e ResponsePhases() devolvem as 8 fases em ordem e em ordem inversa; CanSetRoute verdadeiro só para as 3 primeiras",
+    "ParseSDKRange: as faixas válidas e recusadas de referência da seção 5 dão o resultado esperado; Contains confere 1.4.2 (dentro), 2.0.0-rc.1 (fora), 1.3.0-rc.1 em >=1.0.0 <2.0.0 (dentro) e 1.3.0-rc.1 em >=1.3.0 <2.0.0 (fora)",
+    "DecodeManifest aceita o manifesto do core (duas metades, controller.required: true, phases: []) com BackgroundOnly() verdadeiro, e o do n3x.example",
+    "DecodeManifest recusa default_phase fora de phases com Path proxy.default_phase e Rule not_in_phases, e devolve todos os 4 problemas do exemplo com erros da seção 5, na ordem mostrada",
+    "Cada uma das 16 linhas da tabela de regras tem pelo menos um caso de teste que produz exatamente aquele Path e aquela Rule",
+    "Fuzzing (FuzzParseID, FuzzParseVersion, FuzzParseSDKRange, FuzzDecodeManifest, FuzzToJSON) roda 5 minutos por alvo na CI noturna sem panic (hipótese de duração); o corpus inicial inclui os exemplos desta FDD",
+    "Benchmarks com -benchmem mostram 0 alocações em ParsePhase, Phase.String, Phase.CanSetRoute, Phases, ResponsePhases, ID.String, ID.Namespace e ID.Name",
+    "go list -deps ./plugin só lista pacotes da biblioteca padrão; go vet e go test -race ./plugin/... ./yamlconv/... passam",
+    "Serialização: json.Marshal do mesmo Manifest dá os mesmos bytes em 100 execuções seguidas",
+    "Cobertura de linhas do pacote plugin/ de no mínimo 90% (hipótese)"
+  ],
+  "risks": [
+    {
+      "risk": "Contrato congelado na v1.0.0 com erro de design no ID ou no manifesto",
+      "mitigation": [
+        "Pré-releases v0.x validadas pelo plugin core, pelo n3x.example e por um protótipo de rate limit antes da v1.0.0 (ADR-021)",
+        "Revisão do contrato inteiro do pacote antes da tag, com esta FDD como checklist"
+      ],
+      "probability": "medium",
+      "impact": "major nova do SDK cedo, com todos os plugins recompilados e todos os n3x-plugin.yaml revisados",
+      "contingency_plan": "v2 com camada de compatibilidade para ler manifestos da v1 durante uma major"
+    },
+    {
+      "risk": "Prefixo de métrica igual para IDs diferentes",
+      "mitigation": [
+        "A FDD 20 (BLD-02) passa a recusar no build dois plugins com o mesmo MetricPrefix(), junto com IDs e serviços gRPC duplicados (N3X-B005)",
+        "O registro de métricas do SDK (FDD 06) recusa nome de métrica repetido entre plugins na subida"
+      ],
+      "probability": "low",
+      "impact": "giustech_x.ratelimit e giustech.x_ratelimit geram o mesmo prefixo n3x_giustech_x_ratelimit_, e as métricas dos dois plugins se misturam ou colidem no registro",
+      "contingency_plan": "renomear um dos plugins (major dele) ou tirá-lo da imagem"
+    },
+    {
+      "risk": "ID aceito pelo SDK e inválido como pacote proto, rota ou nome de métrica",
+      "mitigation": [
+        "Partes do ID obrigatoriamente começando com letra (L-48)",
+        "Teste de propriedade que valida as três derivações sobre todo o corpus do fuzzing"
+      ],
+      "probability": "low",
+      "impact": "build ou subida falham longe do autor, com mensagem confusa",
+      "contingency_plan": "patch do SDK restringindo a regex; como restringir é quebra, só é aceitável antes da v1.0.0 ou para IDs que já não funcionavam"
+    },
+    {
+      "risk": "Validação divergente entre SDK, builder, sidecar e controller",
+      "mitigation": [
+        "Todos os repositórios chamam as funções deste pacote; nenhum reimplementa regex ou regra",
+        "Conversão de YAML centralizada em yamlconv",
+        "Busca na CI de cada repositório por expressões regulares de ID fora do SDK (hipótese)"
+      ],
+      "probability": "medium",
+      "impact": "manifesto aceito no add e recusado na subida, ou o contrário",
+      "contingency_plan": "corrigir o repositório divergente para chamar o SDK e publicar patch"
+    },
+    {
+      "risk": "Gramática da faixa sdk restrita demais para os autores",
+      "mitigation": [
+        "Gramática cobre o caso comum (uma major, a partir de uma minor) e é documentada no guia do autor com exemplos",
+        "Gerador n3x-new já escreve a faixa correta (FDD 14)"
+      ],
+      "probability": "low",
+      "impact": "autor não consegue expressar uma compatibilidade real e abre issue",
+      "contingency_plan": "aceitar novos comparadores em minor do SDK, o que é adição compatível"
+    },
+    {
+      "risk": "Biblioteca de YAML com comportamento inesperado",
+      "mitigation": [
+        "Uma única conversão (yamlconv), com limites de âncoras e recusa de chave repetida e de tags",
+        "Fuzzing de ToJSON"
+      ],
+      "probability": "low",
+      "impact": "valores convertidos de forma diferente entre ferramentas, ou expansão de âncoras consumindo memória no build",
+      "contingency_plan": "trocar a biblioteca atrás da mesma função, sem mudar o contrato"
+    }
+  ]
+}

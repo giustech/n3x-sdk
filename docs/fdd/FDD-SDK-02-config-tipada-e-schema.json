@@ -1,0 +1,853 @@
+{
+  "meta": {
+    "product_or_system": "n3x-sdk, pacotes plugin e schemagen",
+    "feature_name": "Config tipada, schema gerado da struct e decodificação estrita (SDK-02)",
+    "fdd_owner": "Guilherme Giusti",
+    "version": "1.0",
+    "date": "2026-10-20"
+  },
+  "context": {
+    "technical_motivation": "A config de cada plugin é escrita pelo operador em YAML, validada em processos diferentes e entregue ao plugin como struct Go. O ADR-020 do n3x-sdk decidiu que a struct é a fonte única do schema, mas não fixou o subconjunto de tipos aceitos, o dialeto do JSON Schema, a gramática exata das tags, o que acontece com um campo ausente, a ordem entre default, validação e segredo, nem o formato do erro. O mesmo schema serve a consumidores que não têm o código do plugin:\n- o entrypoint n3x do sidecar valida a seção plugins sem carregar o .so, só com o schema do manifesto embutido (HLD do n3x-sidecar, passo 3 da subida)\n- o .so decodifica a config de cada instância na struct C (ADR-007 do n3x-sidecar e ADR-015 do n3x-sdk)\n- o host do controller valida e decodifica a seção de cada plugin no n3x.yaml do controller (HLD do n3x-controller)\n- o plugin core mascara os segredos e o painel rotula os campos pelo schema (ADR-006 do n3x-plugin-core e FR-007)\n\nSe o entrypoint aceitar uma config que o .so recusa, o container passa na validação e o Envoy não sobe. Se o schema mudar de bytes entre duas execuções, o build reproduzível (ADR-007 do n3x-builder) quebra. Se uma mensagem de erro ecoar o valor, um segredo ainda não tipado vaza no log.",
+    "fit_with_hld": "Esta FDD especifica a parte de config do pacote plugin/ do módulo github.com/giustech/n3x-sdk (HLD do n3x-sdk, linha plugin/: \"geração do JSON Schema a partir das tags; decodificação estrita da config\") e o pacote auxiliar schemagen, usado pelo builder para gerar o schema. Consumidores:\n- FDDs 05 e 08: proxy.Define[C] e ctrl.Define[C] chamam DecodeConfig[C] e expõem ConfigSchema()\n- FDD 03: acrescenta plugin.Secret pelo ponto de extensão de tipos conhecidos\n- FDD 07: o sdktest decodifica a config de teste com as mesmas regras\n- FDD 14: o schema-check lê schemas com ParseSchema e a API de leitura\n- FDDs 15 e 30: core/config do sidecar e host/config do controller validam a seção de cada plugin pelo schema embutido\n- FDDs 21 e 22: o builder gera os schemas com schemagen e os embute no manifesto\n- FDD 37: a config efetiva usa Normalize e MaskSecrets\n- FDDs 44 e 45: o painel rotula os campos com Walk e Node\n\nRastreabilidade:\n- PRD 1.5: FR-012 (config tipada e validada, schema gerado da struct), FR-001 (seção plugins validada contra o schema do manifesto; mensagem que indica o campo), FR-007 (painel com nome e descrição; mascaramento pelos campos marcados como segredo), FR-013 (schema da config no controller), FR-014 (checagem de schema na CI do plugin), FR-016 (config efetiva no registro); critérios \"n3x.yaml inválido impede a subida com mensagem que aponta o campo e sem segredo no log\" e \"fuzzing nos parsers\"\n- ADRs: ADR-011, ADR-015, ADR-020 e ADR-021 do n3x-sdk; ADR-007 do n3x-sidecar; ADR-003, ADR-006 e ADR-007 do n3x-builder; ADR-006 do n3x-plugin-core\n- Lacunas do README:\n  - L-58 fechada aqui: o schema é gerado por um programa auxiliar com reflexão, montado pelo builder com o pacote schemagen e alimentado por ConfigSchema() de cada Define[C]. A análise estática com go/types foi descartada. A FDD 21 só aplica (contrato 9)\n  - L-46 aplicada: o decodificador recebe bytes JSON; o YAML é convertido pelo chamador com yamlconv.ToJSON (FDD 01)\n  - L-34 aplicada: caminhos de erro e de Walk seguem a convenção da FDD 01, agora também em código (PathKey e PathIndex)\n  - Apoio à L-07 (fechada na FDD 37): Normalize e MaskSecrets preservam o texto ENC[...] recebido, que é o que a impressão digital exige",
+    "actors": [
+      "Autor de plugin (escreve a struct e as tags)",
+      "Builder (gera e embute o schema)",
+      "Entrypoint e .so do sidecar e host do controller (validam e decodificam)",
+      "Plugin core (mascara pelo schema)",
+      "Painel (mostra nome e descrição)",
+      "Operador (lê as mensagens de erro)"
+    ],
+    "assumptions": [
+      "Todos os alvos e arquiteturas da v1 são de 64 bits (amd64 e arm64); int e uint têm 64 bits",
+      "A config de uma instância cabe com folga em 1 MiB (hipótese)",
+      "agent.Plugin() e controller.Plugin() não têm efeito colateral (ADR-015), então um programa auxiliar do build pode chamá-los",
+      "O builder roda a análise estática (passo 4) antes da geração (passo 5) (HLD do n3x-builder)",
+      "O tipo C mora, por convenção, em types/ do repositório do plugin (ADR-020); o gerador obtém o tipo pelo Define[C], não pela pasta"
+    ],
+    "constraints": [
+      "plugin/ é biblioteca pura: não lê arquivo, não abre rede, não loga, não tem estado global mutável e não conhece o formato ENC[...] nem a chave AES. Recebe bytes JSON e devolve struct, JSON normalizado ou erros com caminho e regra. Quem lê o YAML, quem decifra e quem decide o que fazer com o erro é o chamador.",
+      "plugin/ usa só a biblioteca padrão e não importa biblioteca de YAML (HLD do n3x-sdk; L-46 fechada na FDD 01)",
+      "Sem cgo (ADR-011)",
+      "Só o subconjunto do JSON Schema expressável por tags (ADR-020)",
+      "Campo desconhecido é erro e default é aplicado (HLD do n3x-sdk); não existe map[string]any no contrato (ADR-015)",
+      "Nenhum valor de config aparece em mensagem de erro (ASSUNTO; critério de aceite do PRD para n3x.yaml inválido)",
+      "Contrato estável desde a v1.0.0; antes disso, pré-releases v0.x (ADR-021)",
+      "Documentação e mensagens em pt-BR; identificadores de código em inglês"
+    ]
+  },
+  "technical_objectives": [
+    {
+      "objective": "Um veredito só para a mesma config.",
+      "measure_or_invariant": "Invariante: para toda struct aceita pelo gerador e toda entrada, DecodeConfig[C] e ParseSchema(bytes do schema).Validate devolvem a mesma lista de problemas (Path e Rule), na mesma ordem. Medida: teste diferencial com pelo menos 200 entradas por struct de referência (hipótese) e fuzzing diferencial sem divergência."
+    },
+    {
+      "objective": "Schema determinístico.",
+      "measure_or_invariant": "Invariante: a mesma struct gera os mesmos bytes em qualquer execução, máquina e arquitetura. Medida: golden files iguais em 100 execuções seguidas e nas CIs amd64 e arm64."
+    },
+    {
+      "objective": "Ida e volta sem perda.",
+      "measure_or_invariant": "Invariante: ParseSchema(b).MarshalJSON() devolve exatamente b para todo b produzido pelo gerador."
+    },
+    {
+      "objective": "Validação completa numa passada.",
+      "measure_or_invariant": "Medida: todos os problemas (até 100) numa chamada, em ordem determinística, cada um com caminho e regra; nenhum erro derivado de um campo já inválido."
+    },
+    {
+      "objective": "Nenhum valor em mensagem.",
+      "measure_or_invariant": "Medida: teste de canário (seção 9) com 0 ocorrência de valor recebido em Error(), em Detail e no tratamento do erro do SecretOpener."
+    },
+    {
+      "objective": "Parse seguro contra entrada hostil.",
+      "measure_or_invariant": "Medida: fuzzing de DecodeConfig, ParseSchema, Normalize, ParseSize e do teste diferencial por 5 minutos cada na CI noturna, sem panic (hipótese de duração, igual à FDD 01)."
+    },
+    {
+      "objective": "Custo de subida desprezível.",
+      "measure_or_invariant": "Medida: DecodeConfig de uma config de 10 KiB em até 500 µs por operação e de 1 MiB em até 50 ms no runner da CI (hipótese)."
+    }
+  ],
+  "scope": {
+    "included": [
+      "Gramática das tags json, n3x (required, min, max, enum), desc e default",
+      "Tipos Go aceitos, mapeamento de cada um para o JSON Schema e lista de tipos proibidos",
+      "Reconhecimento direto de time.Duration (formato Go, 200ms) e tipo novo plugin.Size (formato Kubernetes e IEC, 256Mi e 128MiB), com ParseDuration e ParseSize",
+      "Documento de schema: dialeto, palavras-chave do subconjunto, extensões x-n3x-*, ordem fixa e versão do subconjunto (x-n3x-schema)",
+      "Gerador SchemaOf[C] determinístico e serialização MarshalJSON",
+      "Leitor ParseSchema para validar sem a struct, e API de leitura (Root, Node, Walk) para o painel, o core e o schema-check",
+      "Validação pelo schema (Validate), normalização com defaults (Normalize) e troca dos segredos (MaskSecrets)",
+      "Decodificador estrito DecodeConfig[C], com a opção WithSecretOpener",
+      "Semântica de ausência: defaults explícitos e implícitos, ponteiro como campo opcional, null recusado",
+      "Erros de config, do gerador e da leitura de schema, todos como plugin.FieldError (FDD 01), com códigos estáveis; PrefixErrors, PathKey e PathIndex",
+      "Ponto de extensão de tipos conhecidos e marca de segredo x-n3x-secret (o tipo plugin.Secret é da FDD 03)",
+      "Interface plugin.ConfigSchemer e pacote schemagen, com o contrato do programa auxiliar do build (L-58)"
+    ],
+    "excluded": [
+      "Tipo plugin.Secret, formato ENC[...], pacote secret/ e a implementação do SecretOpener do sidecar e do controller: FDD 03 (SDK-03)",
+      "proxy.Define[C] e ctrl.Define[C], que implementam ConfigSchemer e chamam DecodeConfig: FDDs 05 (SDK-05) e 08 (SDK-08)",
+      "Comparação de schemas entre versões (schema-check): FDD 14 (SDK-14)",
+      "Execução do programa auxiliar no n3x-plugin build, código de erro do build e compilação: FDD 21 (BLD-03)",
+      "Formato do manifesto embutido, campo dos schemas e leitor do manifesto: FDD 22 (BLD-04)",
+      "Schema do n3x.yaml do sidecar e do controller fora da seção de cada plugin: FDDs 15 (SID-01) e 30 (CTL-01)",
+      "JSON canônico RFC 8785, impressão digital ***:<hex> e hash da config efetiva: FDD 37 (CORE-02)",
+      "Telas do painel que mostram a config: FDDs 44 (CORE-08) e 45 (CORE-09)",
+      "Validação cruzada entre campos (ex.: redis obrigatório quando mode é redis): fica no New do plugin ou na capacidade Validate do controller (FDD 08)",
+      "Regras por item de lista (item_min, item_max, item_enum), pattern, oneOf e $ref: fora da v1; entram por adição numa versão 2 do subconjunto (hipótese)"
+    ]
+  },
+  "detailed_flows": {
+    "main_flow": [
+      "Fluxo de build: geração do schema (L-58), passo 1: O autor declara a struct da config (por convenção em types/) com as tags e a passa a proxy.Define[C] ou ctrl.Define[C].",
+      "Fluxo de build: geração do schema (L-58), passo 2: Na CI do plugin, o sdktest gera o schema e decodifica a config de teste; tag ou tipo inválido já falha no go test (pedido à FDD 07).",
+      "Fluxo de build: geração do schema (L-58), passo 3: No passo 5 do n3x-plugin build, depois da análise estática, o builder gera um programa auxiliar com uma entrada por plugin e metade, em ordem de ID.",
+      "Fluxo de build: geração do schema (L-58), passo 4: O programa chama agent.Plugin() e controller.Plugin(), pede ConfigSchema() a cada valor e escreve no stdout, com schemagen.Run, o JSON {id: {proxy, controller}}.",
+      "Fluxo de build: geração do schema (L-58), passo 5: ConfigSchema() chama plugin.SchemaOf[C](), que percorre o tipo por reflexão, confere tipos e tags, valida cada default (explícito ou implícito) e monta o *Schema.",
+      "Fluxo de build: geração do schema (L-58), passo 6: Se algum tipo ou tag for inválido, o programa sai com código diferente de zero e lista todos os problemas; o builder informa um código próprio (proposta N3X-B014, decidida na FDD 21).",
+      "Fluxo de build: geração do schema (L-58), passo 7: O builder embute os bytes de cada schema, sem reformatar, no manifesto, um por metade (proposta plugins[].schemas.proxy e plugins[].schemas.controller, decidida na FDD 22).",
+      "Fluxo de subida no sidecar, passo 1: O entrypoint lê o n3x.yaml e o converte com yamlconv.ToJSON (recomendação para a FDD 15).",
+      "Fluxo de subida no sidecar, passo 2: Para cada item plugins[i], pega o schema da metade de proxy do plugin no manifesto ELF e chama plugin.ParseSchema.",
+      "Fluxo de subida no sidecar, passo 3: Chama schema.Validate(config, plugin.WithSecretOpener(abrir)), onde abrir decifra com secret/ (FDD 03). Uma passada confere estrutura, defaults, regras e segredos.",
+      "Fluxo de subida no sidecar, passo 4: Prefixa os erros com plugin.PrefixErrors(err, \"plugins[2].config\"), junta os de todos os plugins, loga um registro por problema e encerra com código diferente de zero se houver algum.",
+      "Fluxo de subida no sidecar, passo 5: O .so repete a validação no core/config (ADR-007 do n3x-sidecar) e, para cada instância, chama o Define[C], que roda DecodeConfig[C](config, WithSecretOpener(abrir)) e entrega a struct ao New.",
+      "Fluxo de subida no sidecar, passo 6: O .so confere que ConfigSchema() gera exatamente os bytes embutidos e recusa subir se divergir (recomendação para as FDDs 15 e 17; hipótese).",
+      "Fluxo de subida no sidecar, passo 7: Para a config efetiva, o core do sidecar chama schema.Normalize(config) sem opener: o resultado tem os defaults e os textos ENC[...] originais. A FDD 37 troca os segredos com schema.MaskSecrets e calcula o hash.",
+      "Fluxo de subida no controller, passo 1: O host/config lê o n3x.yaml do controller e converte com yamlconv.ToJSON (recomendação para a FDD 30).",
+      "Fluxo de subida no controller, passo 2: Para cada chave de plugins, pega o schema da metade de controller no manifesto do binário, chama Validate com o opener do controller e prefixa os erros com plugin.PrefixErrors(err, plugin.PathKey(\"plugins\", \"n3x.core\")), que dá plugins[\"n3x.core\"] (a seção do plugin é a própria config, sem chave config).",
+      "Fluxo de subida no controller, passo 3: O ctrl.Define[C] decodifica com DecodeConfig[C] e o host chama Validate do plugin e New (FDDs 08 e 32).",
+      "Fluxo de leitura no painel e no core: O core recebe a config efetiva já mascarada (FDD 37) e o painel tem os schemas no manifesto do controller.",
+      "Fluxo de leitura no painel e no core: O painel chama schema.Walk(config, fn): para cada valor, recebe o caminho e o Node (nome, descrição, default, se é segredo) e monta a exibição. Valor sem nó conhecido (versões diferentes entre sidecar e controller) chega com Node.Known() falso e é mostrado como texto bruto.",
+      "Pipeline de um campo (mesma ordem em Validate, Normalize e DecodeConfig), passo 1: Presença: campo ausente recebe o default do schema; sem default, required vira erro e os demais ficam omitidos (valor zero na struct). Só ponteiros e segredos ficam sem default, porque o gerador escreve um default implícito nos outros campos não obrigatórios",
+      "Pipeline de um campo (mesma ordem em Validate, Normalize e DecodeConfig), passo 2: Tipo JSON: null e coerção são recusados (type)",
+      "Pipeline de um campo (mesma ordem em Validate, Normalize e DecodeConfig), passo 3: Formato (duração e tamanho), min, max e enum",
+      "Pipeline de um campo (mesma ordem em Validate, Normalize e DecodeConfig), passo 4: Nó de segredo: chama o SecretOpener, se houver, só se os passos 2 e 3 passaram",
+      "Pipeline de um campo (mesma ordem em Validate, Normalize e DecodeConfig), passo 5: Preenche a struct (DecodeConfig) ou escreve a saída normalizada (Normalize, MaskSecrets)",
+      "Pipeline de um campo, observação: Segredos não aceitam default, min, max nem enum (regra do ponto de extensão), então o veredito dos passos 1 a 3 não depende de decifrar. Isso permite validar sem a chave AES e garante o mesmo veredito com e sem opener nesses passos.",
+      "Ordem dos problemas: Em cada objeto: primeiro as chaves desconhecidas, em ordem de bytes; depois as propriedades na ordem de declaração da struct",
+      "Ordem dos problemas: Em cada lista: pelo índice; em cada map: pela chave, em ordem de bytes",
+      "Ordem dos problemas: Um campo com erro de presença, tipo ou formato não gera erros derivados (nem dos filhos)",
+      "Ordem dos problemas: Acima de 100 problemas, a lista para e termina com um item truncated"
+    ],
+    "alternative_flows": [
+      "config ausente, vazia ou null na raiz: tratada como {}; os required da raiz viram erro",
+      "null em qualquer outro lugar: type, inclusive em campo ponteiro (ausente é a forma de dizer \"não informado\")",
+      "Número em campo de texto (ex.: value: 1 no YAML para um string): type, sem coerção; o operador põe aspas",
+      "Número com fração ou expoente em campo inteiro: type",
+      "Chave repetida no mesmo objeto: duplicate (o yamlconv já recusa no YAML; a regra cobre JSON vindo de outra origem, como o sdktest)",
+      "Maiúsculas no nome do campo (Limit em vez de limit): unknown_field; a comparação é exata",
+      "SecretOpener falha: secret_open com texto fixo, ou a regra e o texto do FieldError devolvido pelo opener; o texto original do erro nunca é usado",
+      "Schema embutido com versão maior que a do leitor (x-n3x-schema acima de SchemaVersion): ParseSchema recusa com schema_version; o entrypoint diz que a imagem do sidecar é mais antiga que o SDK do .so",
+      "Tipo ou tag inválidos na struct: SchemaOf devolve ErrInvalidSchema com o caminho Go do campo; o build falha (fluxo de build, passo 6)",
+      "Entrada hostil (maior que 1 MiB, aninhamento acima de 32, UTF-8 inválido): size ou syntax, sem panic"
+    ],
+    "diagrams": [
+      "mermaid\n%% Sequência do build (passo 5 do n3x-plugin build; o comportamento do builder é da FDD 21):\nsequenceDiagram\n    participant B as n3x-plugin build\n    participant H as programa auxiliar\n    participant A as agent.Plugin() e controller.Plugin()\n    participant P as plugin/\n    B->>B: gera o main do auxiliar, plugins em ordem de ID\n    B->>H: compila e executa na plataforma do build, CGO_ENABLED=0\n    H->>A: Plugin()\n    A-->>H: valor de Define[C] (ConfigSchemer)\n    H->>P: ConfigSchema() chama SchemaOf[C]()\n    P-->>H: *Schema ou FieldErrors do gerador\n    H-->>B: stdout com {id: {proxy, controller}} ou saída 1\n    B->>B: embute os bytes no manifesto (FDD 22)",
+      "mermaid\n%% Sequência da subida no sidecar:\nsequenceDiagram\n    participant E as entrypoint n3x\n    participant M as manifesto ELF\n    participant S as plugin.Schema\n    participant SO as .so (core/config e Define[C])\n    E->>M: schema da metade de proxy do plugin\n    E->>S: ParseSchema(bytes)\n    E->>S: Validate(config, WithSecretOpener)\n    S-->>E: nil ou FieldErrors\n    E->>E: PrefixErrors(err, \"plugins[2].config\")\n    SO->>S: ConfigSchema() e compara bytes com o embutido\n    SO->>S: DecodeConfig[C](config, WithSecretOpener)\n    S-->>SO: struct C ou o mesmo veredito do entrypoint\n    SO->>S: Normalize(config) para a config efetiva (FDD 37)",
+      "mermaid\n%% Pipeline de um campo:\nflowchart TD\n    A[valor do campo] --> B{presente?}\n    B -- não --> C{schema tem default?}\n    C -- sim --> D[usa o default]\n    C -- não --> E{required?}\n    E -- sim --> X1[erro required]\n    E -- não --> F[omitido: valor zero na struct]\n    B -- sim --> G{tipo JSON certo?}\n    D --> G\n    G -- não --> X2[erro type]\n    G -- sim --> H{formato, min, max e enum}\n    H -- falha --> X3[erro format, min, max ou enum]\n    H -- ok --> I{nó de segredo?}\n    I -- não --> K[preenche ou escreve]\n    I -- sim --> J[SecretOpener, se houver]\n    J -- erro --> X4[erro secret_open]\n    J -- ok --> K"
+    ]
+  },
+  "public_contracts": [
+    {
+      "name": "Contrato 1: tags da struct de config",
+      "kind": "sdk",
+      "signature_or_route": "json    = nome [ \",omitempty\" ]   ; nome casa com ^[a-z][a-z0-9_]{0,63}$ ; \"-\" ignora o campo\nn3x     = opcao { \",\" opcao }      ; sem espaços\nopcao   = \"required\" | \"min=\" valor | \"max=\" valor | \"enum=\" valor { \"|\" valor }\ndesc    = texto de 1 a 512 caracteres, sem quebra de linha ; obrigatória em todo campo\ndefault = valor no formato do tipo do campo",
+      "request_example": {
+        "struct do protótipo de rate limit, em types/": "go\npackage types\n\ntype ProxyConfig struct {\n    Limit    int            `json:\"limit\" n3x:\"required,min=1,max=100000\" desc:\"Requisições permitidas por janela\"`\n    Window   time.Duration  `json:\"window\" n3x:\"min=1s,max=1h\" default:\"1m\" desc:\"Tamanho da janela\"`\n    Mode     string         `json:\"mode\" n3x:\"enum=local|redis\" default:\"local\" desc:\"Onde o contador fica\"`\n    MaxBody  plugin.Size    `json:\"max_body\" n3x:\"max=10Mi\" default:\"1Mi\" desc:\"Maior corpo inspecionado\"`\n    Paths    []string       `json:\"paths\" n3x:\"max=64\" desc:\"Prefixos de path cobertos\"`\n    PerRoute map[string]int `json:\"per_route\" n3x:\"max=256\" desc:\"Limite por serviço gRPC\"`\n    Redis    *Redis         `json:\"redis\" desc:\"Réplica Redis, usada com mode redis\"`\n}\n\ntype Redis struct {\n    Address  string        `json:\"address\" n3x:\"required,min=3,max=255\" desc:\"Endereço host:porta\"`\n    Password plugin.Secret `json:\"password\" desc:\"Senha do Redis\"`\n    Timeout  time.Duration `json:\"timeout\" n3x:\"min=1ms,max=5s\" default:\"50ms\" desc:\"Prazo por comando\"`\n}"
+      },
+      "response_example": {
+        "schema gerado; o JSON real é compacto, sem espaços, formatado aqui só para leitura": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "x-n3x-schema": 1,
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "description": "Requisições permitidas por janela",
+              "minimum": 1,
+              "maximum": 100000
+            },
+            "window": {
+              "type": "string",
+              "description": "Tamanho da janela",
+              "x-n3x-format": "duration",
+              "x-n3x-minimum": "1s",
+              "x-n3x-maximum": "1h0m0s",
+              "default": "1m0s"
+            },
+            "mode": {
+              "type": "string",
+              "description": "Onde o contador fica",
+              "enum": [
+                "local",
+                "redis"
+              ],
+              "default": "local"
+            },
+            "max_body": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "description": "Maior corpo inspecionado",
+              "x-n3x-format": "size",
+              "x-n3x-minimum": "0",
+              "x-n3x-maximum": "10Mi",
+              "default": "1Mi"
+            },
+            "paths": {
+              "type": "array",
+              "description": "Prefixos de path cobertos",
+              "maxItems": 64,
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "per_route": {
+              "type": "object",
+              "description": "Limite por serviço gRPC",
+              "maxProperties": 256,
+              "propertyNames": {
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": -9223372036854775808,
+                "maximum": 9223372036854775807
+              },
+              "default": {}
+            },
+            "redis": {
+              "type": "object",
+              "description": "Réplica Redis, usada com mode redis",
+              "properties": {
+                "address": {
+                  "type": "string",
+                  "description": "Endereço host:porta",
+                  "minLength": 3,
+                  "maxLength": 255
+                },
+                "password": {
+                  "type": "string",
+                  "description": "Senha do Redis",
+                  "x-n3x-secret": true
+                },
+                "timeout": {
+                  "type": "string",
+                  "description": "Prazo por comando",
+                  "x-n3x-format": "duration",
+                  "x-n3x-minimum": "1ms",
+                  "x-n3x-maximum": "5s",
+                  "default": "50ms"
+                }
+              },
+              "required": [
+                "address"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "headers_semantics": [
+        "json: todo campo exportado precisa de tag json com nome explícito em snake_case (hipótese). omitempty é aceito e ignorado; a opção string é recusada. Campo com json:\"-\" e campo não exportado ficam fora do schema e mantêm o valor zero",
+        "required: a chave precisa estar presente. Não combina com default nem com ponteiro",
+        "min e max: valor numérico para inteiros e float64 (minimum e maximum); quantidade de caracteres Unicode para texto (minLength e maxLength); quantidade de itens para lista (minItems e maxItems); quantidade de entradas para map (minProperties e maxProperties); duração no formato Go para time.Duration (min=1ms); tamanho para plugin.Size (max=10Mi)",
+        "enum: só em texto e inteiro; valores separados por |, sem , nem | dentro do valor, sem repetição, na ordem escrita",
+        "desc: obrigatória, porque o painel mostra nome e descrição de cada campo (FR-007) (hipótese). Texto simples; o renderizador escapa",
+        "default: só em texto, inteiro, float64, bool, duração e tamanho. Precisa passar nas regras do próprio campo",
+        "Regras não expressáveis por tag (dependência entre campos, formato de URL) ficam no New do plugin ou no Validate do controller"
+      ],
+      "status_semantics": [
+        "Tag desconhecida fora de json, n3x, desc e default é ignorada (pode ser de outra biblioteca); opção desconhecida dentro de n3x é erro"
+      ]
+    },
+    {
+      "name": "Contrato 2: mapeamento de tipos Go para o JSON Schema",
+      "kind": "sdk",
+      "signature_or_route": "Tabela de mapeamento de tipos Go para o JSON Schema (itens de headers_semantics)",
+      "request_example": "go\ntype Exemplo struct {\n    Nivel  int8              `json:\"nivel\" desc:\"Nível\"`\n    Peso   *float64          `json:\"peso\" n3x:\"min=0\" desc:\"Peso opcional\"`\n    Rotulos map[string]string `json:\"rotulos\" desc:\"Rótulos livres\"`\n}",
+      "response_example": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "x-n3x-schema": 1,
+        "type": "object",
+        "properties": {
+          "nivel": {
+            "type": "integer",
+            "description": "Nível",
+            "minimum": -128,
+            "maximum": 127,
+            "default": 0
+          },
+          "peso": {
+            "type": "number",
+            "description": "Peso opcional",
+            "minimum": 0
+          },
+          "rotulos": {
+            "type": "object",
+            "description": "Rótulos livres",
+            "propertyNames": {
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          }
+        },
+        "additionalProperties": false
+      },
+      "headers_semantics": [
+        "Tipo Go: string e tipos nomeados de string; Kind: KindString; Schema gerado: {\"type\":\"string\"}; min e max viram: minLength, maxLength; enum: sim; default por tag: sim; Default implícito: \"\"",
+        "Tipo Go: int, int8 a int64, uint, uint8 a uint64 (e nomeados); Kind: KindInteger; Schema gerado: {\"type\":\"integer\",\"minimum\":..,\"maximum\":..}, sempre com os limites; min e max viram: minimum, maximum (dentro da faixa do tipo); enum: sim; default por tag: sim; Default implícito: 0",
+        "Tipo Go: float64; Kind: KindNumber; Schema gerado: {\"type\":\"number\"}; min e max viram: minimum, maximum; enum: não; default por tag: sim; Default implícito: 0",
+        "Tipo Go: bool; Kind: KindBoolean; Schema gerado: {\"type\":\"boolean\"}; min e max viram: não; enum: não; default por tag: sim; Default implícito: false",
+        "Tipo Go: time.Duration; Kind: KindDuration; Schema gerado: {\"type\":\"string\",\"x-n3x-format\":\"duration\",\"x-n3x-minimum\":\"0s\"}; min e max viram: x-n3x-minimum, x-n3x-maximum; enum: não; default por tag: sim; Default implícito: \"0s\"",
+        "Tipo Go: plugin.Size; Kind: KindSize; Schema gerado: {\"type\":[\"integer\",\"string\"],\"x-n3x-format\":\"size\",\"x-n3x-minimum\":\"0\"}; min e max viram: x-n3x-minimum, x-n3x-maximum; enum: não; default por tag: sim; Default implícito: \"0\"",
+        "Tipo Go: []T; Kind: KindArray; Schema gerado: {\"type\":\"array\",\"items\":<T>}; min e max viram: minItems, maxItems; enum: não; default por tag: não; Default implícito: []",
+        "Tipo Go: map[string]T; Kind: KindMap; Schema gerado: {\"type\":\"object\",\"propertyNames\":{\"minLength\":1,\"maxLength\":128},\"additionalProperties\":<T>}; min e max viram: minProperties, maxProperties; enum: não; default por tag: não; Default implícito: {}",
+        "Tipo Go: struct; Kind: KindObject; Schema gerado: {\"type\":\"object\",\"properties\":{..},\"required\":[..],\"additionalProperties\":false}; min e max viram: não; enum: não; default por tag: não; Default implícito: {}",
+        "Tipo Go: *T (T escalar ou struct); Kind: o de T; Schema gerado: schema de T, sem default; min e max viram: os de T; enum: os de T; default por tag: não; Default implícito: nenhum (ausente = nil)",
+        "Tipo Go: plugin.Secret (FDD 03); Kind: KindString; Schema gerado: {\"type\":\"string\",\"x-n3x-secret\":true}; min e max viram: não; enum: não; default por tag: não; Default implícito: nenhum",
+        "Default implícito: todo campo que não é ponteiro, não é segredo e não é required recebe no schema um default: o da tag ou o valor zero da tabela. Assim o schema descreve sozinho a config efetiva, e o caminho só pelo schema chega ao mesmo resultado que a struct",
+        "Ponteiro: é a única forma de campo opcional sem default. Ausente fica nil e fora da saída normalizada; presente é validado como T",
+        "Inteiros: o schema sempre traz minimum e maximum, da tag ou da faixa do tipo Go, então o caminho só pelo schema recusa o mesmo estouro que a struct recusaria",
+        "Listas e maps decodificados nunca são nil: ausente ou vazio vira lista ou map vazio",
+        "Chaves de map: texto Unicode de 1 a 128 caracteres (hipótese)",
+        "Profundidade: no máximo 32 níveis de objeto, lista ou map (hipótese)",
+        "Plataforma: int e uint são tratados como 64 bits; o schema é igual em amd64 e arm64"
+      ],
+      "status_semantics": [
+        "Todo default passa no próprio schema: o gerador valida cada default, explícito ou implícito, com o mesmo validador do runtime. Um int com min=1 sem required, sem default e sem ponteiro é erro de build (default_invalid), porque o valor zero viola o mínimo. O mesmo vale para struct não ponteiro cujos campos obrigatórios fariam {} falhar"
+      ]
+    },
+    {
+      "name": "Contrato 3: time.Duration e plugin.Size",
+      "kind": "sdk",
+      "signature_or_route": "package plugin\n\nfunc ParseDuration(s string) (time.Duration, error) // time.ParseDuration, recusa negativo\n\ntype Size int64 // bytes\n\nconst (\n    KiB Size = 1 << 10\n    MiB Size = 1 << 20\n    GiB Size = 1 << 30\n    TiB Size = 1 << 40\n)\n\nfunc ParseSize(s string) (Size, error)\nfunc (s Size) Bytes() int64\nfunc (s Size) String() string // forma canônica: \"256Mi\", \"1536\", \"0\"\nfunc (s Size) MarshalText() ([]byte, error)\nfunc (s *Size) UnmarshalText(b []byte) error",
+      "request_example": {
+        "ParseSize": [
+          "256Mi",
+          "128MiB",
+          "1536",
+          4096,
+          "0",
+          "256M",
+          "1.5Gi",
+          "-1"
+        ],
+        "ParseDuration": [
+          "200ms",
+          "1m30s",
+          "0",
+          "-1s",
+          "5"
+        ]
+      },
+      "response_example": "json\n{\n  \"ParseSize\": {\n    \"256Mi\": { \"bytes\": 268435456, \"canonica\": \"256Mi\" },\n    \"128MiB\": { \"bytes\": 134217728, \"canonica\": \"128Mi\" },\n    \"1536\": { \"bytes\": 1536, \"canonica\": \"1536\" },\n    \"4096\": { \"bytes\": 4096, \"canonica\": \"4Ki\" },\n    \"0\": { \"bytes\": 0, \"canonica\": \"0\" },\n    \"256M\": \"format\",\n    \"1.5Gi\": \"format\",\n    \"-1\": \"format\"\n  },\n  \"ParseDuration\": { \"200ms\": \"200ms\", \"1m30s\": \"1m30s\", \"0\": \"0s\", \"-1s\": \"min\", \"5\": \"format\" }\n}",
+      "headers_semantics": [
+        "Duração: o SDK não cria plugin.Duration; o gerador reconhece time.Duration pelo tipo e o trata como texto no formato Go (200ms, 1m30s, 0), aceito por time.ParseDuration. Negativo é recusado (min, com mínimo implícito 0s). Número JSON é recusado (type), porque 5 não diz a unidade. Forma canônica: time.Duration.String() (1m0s, 50ms, 0s) (hipótese)",
+        "Tamanho: texto com inteiro decimal sem sinal e sufixo opcional Ki, Mi, Gi, Ti (Kubernetes, como 256Mi no n3x.yaml do sidecar) ou KiB, MiB, GiB, TiB (IEC, como 128MiB no n3x.yaml do controller), sempre base 1024. Também aceita número JSON inteiro, em bytes. Recusa sufixos decimais (k, M, G, KB, MB), fração e sinal, para não haver dúvida entre 1000 e 1024 (hipótese)",
+        "Forma canônica de Size: o maior sufixo entre Ti, Gi, Mi e Ki que divide o valor exatamente; senão, os bytes em decimal; zero é \"0\"",
+        "As FDDs 15 e 30 devem usar ParseDuration e ParseSize nos campos de duração e tamanho do próprio n3x.yaml, para a plataforma ter um formato só (recomendação)"
+      ],
+      "status_semantics": [
+        "Estouro de int64 é format"
+      ]
+    },
+    {
+      "name": "Contrato 4: documento de schema (formato mínimo lido pelo painel, pelo core e pelo entrypoint)",
+      "kind": "sdk",
+      "signature_or_route": "JSON Schema draft 2020-12, restrito ao subconjunto abaixo, com extensões x-n3x-*",
+      "request_example": {
+        "ParseSchema sobre um schema de imagem mais nova": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "x-n3x-schema": 2,
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      "response_example": {
+        "ParseSchema sobre um schema de imagem mais nova": "text\nx-n3x-schema: versão 2 do subconjunto é maior que a suportada (1); use uma imagem com SDK mais novo [schema_version]"
+      },
+      "headers_semantics": [
+        "Dialeto: $schema é https://json-schema.org/draft/2020-12/schema (hipótese). Todas as palavras-chave padrão usadas têm o mesmo significado no draft-07, então editores com qualquer um dos dois funcionam para autocompletar. O validador normativo é o do SDK, não uma biblioteca externa",
+        "Extensões: x-n3x-format (duration ou size; não se usa format porque o draft 2020-12 define duration como ISO 8601), x-n3x-minimum e x-n3x-maximum (limites de duração e tamanho em forma canônica) e x-n3x-secret (marca de segredo, reservada aqui e ligada ao plugin.Secret pela FDD 03)",
+        "Ordem fixa das palavras-chave em cada nó, igual à da tabela abaixo; propriedades e required na ordem de declaração da struct; JSON compacto, sem espaços; números como o encoding/json escreve",
+        "Leitura pelos consumidores: painel usa nome da propriedade, description e default; core usa x-n3x-secret; entrypoint e controller usam o documento inteiro. Todos leem por ParseSchema e pela API de leitura (contrato 5), nunca com parser próprio (recomendação para as FDDs 15, 30, 37, 44 e 45)",
+        "O builder embute os bytes como estão (json.RawMessage); reformatar ou reordenar quebra a comparação byte a byte do .so e a ida e volta",
+        "Palavra-chave (ordem de escrita): $schema; Onde: raiz; Significado no validador do SDK: Dialeto declarado",
+        "Palavra-chave (ordem de escrita): x-n3x-schema; Onde: raiz; Significado no validador do SDK: Versão do subconjunto; leitor recusa versão maior que SchemaVersion",
+        "Palavra-chave (ordem de escrita): type; Onde: todo nó; Significado no validador do SDK: object, array, string, integer, number, boolean ou [\"integer\",\"string\"] (tamanho); null nunca é aceito",
+        "Palavra-chave (ordem de escrita): description; Onde: todo nó com desc; Significado no validador do SDK: Texto do painel",
+        "Palavra-chave (ordem de escrita): x-n3x-format; Onde: duração e tamanho; Significado no validador do SDK: Formato do texto",
+        "Palavra-chave (ordem de escrita): x-n3x-secret; Onde: texto; Significado no validador do SDK: Campo segredo: sem default, enum, minLength nem maxLength",
+        "Palavra-chave (ordem de escrita): enum; Onde: texto e inteiro; Significado no validador do SDK: Lista fechada, comparação exata",
+        "Palavra-chave (ordem de escrita): minimum, maximum; Onde: inteiro e número; Significado no validador do SDK: Limites inclusivos",
+        "Palavra-chave (ordem de escrita): x-n3x-minimum, x-n3x-maximum; Onde: duração e tamanho; Significado no validador do SDK: Limites inclusivos em forma canônica",
+        "Palavra-chave (ordem de escrita): minLength, maxLength; Onde: texto; Significado no validador do SDK: Caracteres Unicode",
+        "Palavra-chave (ordem de escrita): minItems, maxItems; Onde: lista; Significado no validador do SDK: Itens",
+        "Palavra-chave (ordem de escrita): items; Onde: lista; Significado no validador do SDK: Schema de cada item",
+        "Palavra-chave (ordem de escrita): minProperties, maxProperties; Onde: map; Significado no validador do SDK: Entradas",
+        "Palavra-chave (ordem de escrita): propertyNames; Onde: map; Significado no validador do SDK: Só minLength e maxLength da chave",
+        "Palavra-chave (ordem de escrita): properties; Onde: struct; Significado no validador do SDK: Propriedades, na ordem de declaração",
+        "Palavra-chave (ordem de escrita): required; Onde: struct; Significado no validador do SDK: Nomes obrigatórios, na ordem de declaração",
+        "Palavra-chave (ordem de escrita): additionalProperties; Onde: struct e map; Significado no validador do SDK: false na struct; schema do valor no map",
+        "Palavra-chave (ordem de escrita): default; Onde: nó não obrigatório, fora ponteiro e segredo; Significado no validador do SDK: Valor usado quando a chave falta, já em forma canônica"
+      ],
+      "versioning": "Versão do subconjunto: a raiz traz x-n3x-schema (inteiro). A v1 do SDK escreve e lê a versão 1. Palavra-chave nova no subconjunto só entra com versão nova; o gerador escreve a menor versão que cobre as palavras usadas pela struct, para um plugin que não usa recurso novo continuar legível por imagens antigas"
+    },
+    {
+      "name": "Contrato 5: plugin.Schema, Node e as operações sobre a config",
+      "kind": "sdk",
+      "signature_or_route": "package plugin\n\ntype Schema struct{ /* imutável; seguro para uso concorrente */ }\n\nfunc SchemaOf[C any]() (*Schema, error)        // gera da struct C por reflexão\nfunc ParseSchema(data []byte) (*Schema, error) // lê o documento embutido, estrito\n\nfunc (s *Schema) MarshalJSON() ([]byte, error) // compacto e determinístico\nfunc (s *Schema) Version() int                 // x-n3x-schema\nfunc (s *Schema) Root() Node\nfunc (s *Schema) Validate(config []byte, opts ...DecodeOption) error\nfunc (s *Schema) Normalize(config []byte, opts ...DecodeOption) ([]byte, error)\nfunc (s *Schema) MaskSecrets(config []byte, mask func(path, text string) string) ([]byte, error)\nfunc (s *Schema) Walk(config []byte, fn func(path string, n Node, value json.RawMessage) error) error\n\ntype Kind uint8\n\nconst (\n    KindObject Kind = iota + 1 // struct: propriedades fixas\n    KindMap                    // map[string]T\n    KindArray                  // []T\n    KindString\n    KindInteger\n    KindNumber\n    KindBoolean\n    KindDuration               // time.Duration\n    KindSize                   // plugin.Size\n)\n\nfunc (k Kind) String() string // \"object\", \"map\", \"array\", \"string\", ...\n\ntype Node struct{ /* referência imutável a um nó; valor zero = nó desconhecido */ }\n\nfunc (n Node) Known() bool\nfunc (n Node) Kind() Kind\nfunc (n Node) Name() string                     // nome JSON, só em propriedade de struct\nfunc (n Node) Desc() string\nfunc (n Node) Required() bool\nfunc (n Node) Secret() bool\nfunc (n Node) Default() (json.RawMessage, bool) // forma canônica\nfunc (n Node) Min() (json.RawMessage, bool)     // valor, tamanho ou quantidade mínima\nfunc (n Node) Max() (json.RawMessage, bool)\nfunc (n Node) Enum() []json.RawMessage\nfunc (n Node) Fields() []Node                   // KindObject, ordem de declaração; cópia\nfunc (n Node) Field(name string) (Node, bool)\nfunc (n Node) Elem() Node                       // KindArray e KindMap\n\nconst (\n    SchemaDialect   = \"https://json-schema.org/draft/2020-12/schema\"\n    SchemaVersion   = 1\n    MaxConfigSize   = 1 << 20   // 1 MiB por config de instância\n    MaxSchemaSize   = 256 << 10 // 256 KiB por schema\n    MaxConfigDepth  = 32\n    MaxConfigErrors = 100\n    MaxDescLength   = 512\n    MaxMapKeyLength = 128\n)",
+      "request_example": {
+        "Normalize sobre a config de uma instância, schema do contrato 1": {
+          "limit": 100,
+          "paths": [
+            "/api/"
+          ],
+          "redis": {
+            "address": "redis:6379",
+            "password": "ENC[v1:q8Jr...]"
+          }
+        },
+        "Walk sobre uma seção do core já mascarada, para o painel": {
+          "users": [
+            {
+              "name": "ana",
+              "password_hash": "***:51e0c3aa9b12",
+              "disabled": false
+            }
+          ]
+        }
+      },
+      "response_example": {
+        "Normalize sobre a config de uma instância, schema do contrato 1": {
+          "limit": 100,
+          "window": "1m0s",
+          "mode": "local",
+          "max_body": "1Mi",
+          "paths": [
+            "/api/"
+          ],
+          "per_route": {},
+          "redis": {
+            "address": "redis:6379",
+            "password": "ENC[v1:q8Jr...]",
+            "timeout": "50ms"
+          }
+        },
+        "Walk sobre uma seção do core já mascarada, para o painel; chamadas de fn, uma por linha: caminho, Kind, nome, segredo": "text\n\"\"                         object  -               false\nusers                      array   users           false\nusers[0]                   object  -               false\nusers[0].name              string  name            false\nusers[0].password_hash     string  password_hash   true\nusers[0].disabled          boolean disabled        false"
+      },
+      "headers_semantics": [
+        "SchemaOf[C]: C precisa ser struct (não ponteiro). Não guarda cache global; quem chama várias vezes guarda o resultado (o Define[C] guarda o seu)",
+        "Validate e Normalize aplicam o pipeline da seção 4 e devolvem os mesmos erros. Normalize devolve a config com todos os defaults, propriedades na ordem de declaração, chaves de map ordenadas, duração e tamanho em forma canônica e o texto dos segredos como recebido (com ou sem opener). Normalize é idempotente",
+        "MaskSecrets: normaliza e troca o texto de cada segredo presente por mask(caminho, texto recebido). É o ponto onde a FDD 37 aplica ***:<impressão digital> ou ***:plain",
+        "Walk: tolerante, para exibição. Visita cada valor do JSON (raiz com caminho vazio), na ordem da seção 4, com o Node correspondente; valor sem nó no schema chega com Known() falso. Só falha com JSON inválido ou erro devolvido por fn",
+        "Caminhos seguem a convenção da L-34 (contrato 7)"
+      ],
+      "status_semantics": [
+        "ParseSchema: aceita só o subconjunto da versão que conhece; palavra-chave fora do subconjunto, valor de tipo errado, required sem a propriedade, minimum maior que maximum ou default que não passa nas regras são erros. Preserva a ordem das propriedades do texto"
+      ],
+      "limits": {
+        "payload_size": "Config de instância com no máximo 1 MiB (MaxConfigSize = 1 << 20); schema com no máximo 256 KiB (MaxSchemaSize = 256 << 10); no máximo 32 níveis de aninhamento (MaxConfigDepth), 100 problemas por chamada (MaxConfigErrors), desc com até 512 caracteres (MaxDescLength) e chave de map com até 128 caracteres (MaxMapKeyLength)"
+      }
+    },
+    {
+      "name": "Contrato 6: plugin.DecodeConfig e o SecretOpener",
+      "kind": "sdk",
+      "signature_or_route": "package plugin\n\n// Abre o texto de um campo segredo (ex.: decifra ENC[...]). Implementado pelo sidecar e pelo controller (FDD 03).\ntype SecretOpener func(path, text string) (string, error)\n\ntype DecodeOption func(*decodeOptions)\n\nfunc WithSecretOpener(open SecretOpener) DecodeOption\n\n// Gera o schema de C, valida (pipeline da seção 4) e preenche C.\nfunc DecodeConfig[C any](data []byte, opts ...DecodeOption) (C, error)\n\n// Implementada pelos valores de proxy.Define[C] e ctrl.Define[C] (FDDs 05 e 08).\ntype ConfigSchemer interface {\n    ConfigSchema() (*Schema, error)\n}",
+      "request_example": {
+        "limit": 100,
+        "paths": [
+          "/api/"
+        ],
+        "redis": {
+          "address": "redis:6379",
+          "password": "ENC[v1:q8Jr...]"
+        }
+      },
+      "response_example": {
+        "struct entregue ao New": "go\ntypes.ProxyConfig{\n    Limit: 100, Window: time.Minute, Mode: \"local\", MaxBody: plugin.MiB,\n    Paths: []string{\"/api/\"}, PerRoute: map[string]int{},\n    Redis: &types.Redis{Address: \"redis:6379\", Password: /* plugin.Secret com o texto aberto pelo opener */, Timeout: 50 * time.Millisecond},\n}"
+      },
+      "headers_semantics": [
+        "Entrada: bytes JSON (L-46). nil, vazio, só espaços ou null valem {}. A raiz precisa ser objeto. Até MaxConfigSize; UTF-8 inválido é syntax",
+        "Decodificação exata: nomes comparados byte a byte, sem coerção de tipo, sem null, sem chave repetida, sem campo desconhecido",
+        "O veredito é o de SchemaOf[C]().Validate(data, opts...), na mesma ordem; só depois a struct é preenchida. Por construção, DecodeConfig[C](Normalize(x)) é igual a DecodeConfig[C](x)",
+        "SecretOpener: chamado uma vez por valor de segredo presente, na ordem do pipeline, só se o valor passou no tipo e nas regras. Recebe o caminho e o texto recebido; devolve o texto aberto. Sem opener, o texto recebido é usado como está (caso do sdktest)",
+        "Ponto de extensão de tipos conhecidos: plugin/ tem uma tabela fixa, não exportada e imutável, de tipos tratados pelo nome: time.Duration, plugin.Size e, pela FDD 03, plugin.Secret. Cada entrada define o nó do schema e como construir o valor. Para um tipo marcado como segredo, o construtor recebe o texto recebido e o texto aberto, e a FDD 03 decide o que o plugin.Secret guarda (inclusive o que a L-07 precisar). Tipo de segredo não aceita default, min, max nem enum"
+      ],
+      "status_semantics": [
+        "Erro do opener: se for (ou embrulhar) um plugin.FieldError, valem a Rule e o Detail dele, com o Path trocado pelo do campo; senão, Rule secret_open e texto fixo. O texto original do erro é descartado, porque pode conter material sensível",
+        "Nenhuma decodificação própria: tipo fora da tabela que implementa json.Unmarshaler ou encoding.TextUnmarshaler é recusado pelo gerador, porque o caminho só pelo schema não conseguiria reproduzir a lógica dele"
+      ],
+      "limits": {
+        "payload_size": "Entrada de até MaxConfigSize (1 MiB) por config de instância"
+      }
+    },
+    {
+      "name": "Contrato 7: erros de config e caminhos",
+      "kind": "sdk",
+      "signature_or_route": "package plugin\n\nvar (\n    ErrInvalidConfig = errors.New(\"plugin: config inválida\")\n    ErrInvalidSchema = errors.New(\"plugin: schema inválido\") // gerador e ParseSchema\n)\n\nfunc PathKey(base, key string) string        // (\"plugins\", \"n3x.core\") -> plugins[\"n3x.core\"]; (\"\", \"limit\") -> limit\nfunc PathIndex(base string, i int) string    // (\"plugins\", 2) -> plugins[2]\nfunc PrefixErrors(err error, prefix string) error",
+      "request_example": {
+        "plugins[2].config no n3x.yaml do serviço, schema do contrato 1, Validate sem opener": {
+          "limt": 5,
+          "limit": 0,
+          "window": "10ms",
+          "mode": "global",
+          "max_body": "20M",
+          "per_route": {
+            "pedidos.v1.Pedidos": "dez"
+          },
+          "redis": {
+            "password": "ENC[v1:Zk9...]"
+          }
+        }
+      },
+      "response_example": {
+        "PrefixErrors(err, \"plugins[2].config\").Error()": "text\nplugins[2].config.limt: campo desconhecido [unknown_field]\nplugins[2].config.limit: abaixo do mínimo 1 [min]\nplugins[2].config.window: abaixo do mínimo 1s [min]\nplugins[2].config.mode: fora da lista permitida: local, redis [enum]\nplugins[2].config.max_body: tamanho inválido; use bytes ou os sufixos Ki, Mi, Gi e Ti (ex.: 256Mi) [format]\nplugins[2].config.per_route[\"pedidos.v1.Pedidos\"]: esperado inteiro, recebido texto [type]\nplugins[2].config.redis.address: campo obrigatório [required]"
+      },
+      "headers_semantics": [
+        "Path relativo à raiz da config; o chamador prefixa com PrefixErrors, que junta pelas regras da L-34 (ponto antes de chave simples, nada antes de colchete, só o prefixo quando o caminho é vazio) e preserva a sentinela. Erro sem FieldErrors volta como está",
+        "PathKey usa ponto quando a chave casa com ^[a-z0-9_]+$; senão, colchetes com a chave escrita como texto JSON (aspas e escapes)"
+      ],
+      "status_semantics": [
+        "Reaproveita plugin.FieldError{Path, Rule, Detail} e plugin.FieldErrors da FDD 01. As funções desta FDD devolvem um erro cujo Error() é o de FieldErrors (uma linha por problema), que satisfaz errors.Is(err, ErrInvalidConfig) (ou ErrInvalidSchema) e do qual errors.As(err, &fe), com var fe plugin.FieldErrors, extrai a lista. Implementação: tipo não exportado com Unwrap() []error",
+        "Detail nunca cita o valor recebido nem trecho da entrada. Cita só dado do schema (limites, lista do enum, formato esperado) e o tipo JSON recebido. Erro de sintaxe cita só a posição em bytes",
+        "Rule: size; Condição: Entrada maior que 1 MiB; Detail (modelo): config maior que 1 MiB",
+        "Rule: syntax; Condição: JSON inválido, UTF-8 inválido, raiz que não é objeto, aninhamento acima de 32; Detail (modelo): JSON inválido perto do byte 120; a config precisa ser um objeto",
+        "Rule: duplicate; Condição: Chave repetida no mesmo objeto; Detail (modelo): chave repetida",
+        "Rule: unknown_field; Condição: Chave fora das propriedades da struct; Detail (modelo): campo desconhecido",
+        "Rule: type; Condição: Tipo JSON errado, null, fração ou expoente em inteiro; Detail (modelo): esperado inteiro, recebido texto",
+        "Rule: required; Condição: Chave obrigatória ausente; Detail (modelo): campo obrigatório",
+        "Rule: min; Condição: Abaixo do mínimo; texto, lista ou map pequeno demais; duração negativa; Detail (modelo): abaixo do mínimo 1; menos de 3 caracteres",
+        "Rule: max; Condição: Acima do máximo; texto, lista ou map grande demais; Detail (modelo): acima do máximo 100000; mais de 64 itens",
+        "Rule: enum; Condição: Valor fora da lista; Detail (modelo): fora da lista permitida: local, redis",
+        "Rule: format; Condição: Duração ou tamanho mal escritos, estouro; Detail (modelo): tamanho inválido; use bytes ou os sufixos Ki, Mi, Gi e Ti (ex.: 256Mi)",
+        "Rule: key_length; Condição: Chave de map vazia ou com mais de 128 caracteres (caminho do map, sem a chave); Detail (modelo): chave vazia ou com mais de 128 caracteres",
+        "Rule: secret_open; Condição: SecretOpener falhou sem FieldError próprio; Detail (modelo): segredo não pôde ser aberto",
+        "Rule: truncated; Condição: Mais de 100 problemas (caminho vazio); Detail (modelo): mais de 100 problemas; os demais foram omitidos"
+      ],
+      "versioning": "Códigos de regra estáveis na major (FDD 01): testes conferem Path e Rule, nunca o texto"
+    },
+    {
+      "name": "Contrato 8: erros do gerador e da leitura de schema",
+      "kind": "sdk",
+      "signature_or_route": "FieldErrors com errors.Is(err, ErrInvalidSchema)",
+      "request_example": "go\ntype Ruim struct {\n    Hosts   []string    `json:\"hosts\" n3x:\"enum=a|b\" desc:\"Hosts\"`\n    Porta   int         `json:\"porta\" n3x:\"min=1,max=65535\" desc:\"Porta\"`\n    Extra   any         `json:\"extra\" desc:\"Livre\"`\n    Timeout time.Duration `json:\"timeout\" n3x:\"mn=1s\" desc:\"Prazo\"`\n}",
+      "response_example": "text\ntypes.Ruim.Hosts: enum só vale para texto e inteiro [tag_conflict]\ntypes.Ruim.Porta: o valor zero viola min=1; marque required, dê um default ou use ponteiro [default_invalid]\ntypes.Ruim.Extra: tipo any não é aceito na config [unsupported_type]\ntypes.Ruim.Timeout: opção desconhecida \"mn\" na tag n3x [tag_unknown]",
+      "headers_semantics": [
+        "No gerador, Path é o caminho Go: nome do tipo raiz e nomes Go dos campos, [] para item de lista e [*] para valor de map (ex.: types.ProxyConfig.Redis.Timeout, types.CoreController.Users[].Name)",
+        "Na leitura, Path é o caminho dentro do documento de schema, pela convenção da L-34 (ex.: properties.limit.minimum)",
+        "Todos os problemas numa passada, na ordem de declaração"
+      ],
+      "status_semantics": [
+        "Rule: unsupported_type; Origem: gerador; Condição: Interface (inclusive any e error), canal, função, complexo, uintptr, unsafe.Pointer, array de tamanho fixo, []byte, float32, map com chave que não é string, ponteiro para ponteiro, lista ou map, tipo com UnmarshalJSON ou UnmarshalText próprio fora da tabela de tipos conhecidos, raiz que não é struct",
+        "Rule: embedded; Origem: gerador; Condição: Campo embutido (anônimo)",
+        "Rule: recursive; Origem: gerador; Condição: Tipo que contém a si mesmo",
+        "Rule: depth; Origem: gerador; Condição: Mais de 32 níveis",
+        "Rule: json_name; Origem: gerador; Condição: Campo exportado sem tag json, nome vazio, opção string, nome fora de ^[a-z][a-z0-9_]{0,63}$",
+        "Rule: json_duplicate; Origem: gerador; Condição: Dois campos com o mesmo nome JSON",
+        "Rule: tag_syntax; Origem: gerador; Condição: Tag n3x com espaço, opção vazia ou repetida, = sem valor",
+        "Rule: tag_unknown; Origem: gerador; Condição: Opção fora de required, min, max e enum",
+        "Rule: tag_conflict; Origem: gerador; Condição: required com default; required ou default em ponteiro; default em lista, map, struct ou segredo; min, max ou enum em segredo; enum fora de texto e inteiro; min ou max em bool ou struct",
+        "Rule: tag_value; Origem: gerador; Condição: Valor de min, max, enum ou default que não é do tipo do campo ou sai da faixa do tipo; min maior que max; enum repetido",
+        "Rule: default_invalid; Origem: gerador; Condição: Default explícito ou implícito que não passa nas regras do campo",
+        "Rule: desc_missing; Origem: gerador; Condição: Campo sem desc",
+        "Rule: desc_length; Origem: gerador; Condição: desc com mais de 512 caracteres ou com quebra de linha",
+        "Rule: size, syntax; Origem: leitura; Condição: Schema maior que 256 KiB, JSON inválido",
+        "Rule: schema_version; Origem: leitura; Condição: x-n3x-schema ausente ou maior que SchemaVersion",
+        "Rule: schema_keyword; Origem: leitura; Condição: Palavra-chave fora do subconjunto ou fora do lugar",
+        "Rule: schema_value; Origem: leitura; Condição: Valor de palavra-chave com tipo errado ou incoerente (required sem propriedade, mínimo maior que máximo, default inválido, segredo com default)"
+      ]
+    },
+    {
+      "name": "Contrato 9: schemagen e o programa auxiliar do build (L-58)",
+      "kind": "sdk",
+      "signature_or_route": "package schemagen // github.com/giustech/n3x-sdk/schemagen; só biblioteca padrão e plugin/\n\ntype Entry struct {\n    ID     string               // ID do plugin, conferido com plugin.ParseID\n    Half   plugin.Half          // plugin.HalfProxy ou plugin.HalfController\n    Plugin plugin.ConfigSchemer // agent.Plugin() ou controller.Plugin()\n}\n\n// Escreve em w {\"<id>\":{\"proxy\":<schema>,\"controller\":<schema>}} e uma quebra de linha.\n// Com qualquer erro, não escreve nada e devolve todos os problemas.\nfunc Run(w io.Writer, entries []Entry) error",
+      "request_example": {
+        "programa gerado pelo builder": "go\n// Code generated by n3x-plugin build. DO NOT EDIT.\npackage main\n\nimport (\n    \"os\"\n\n    ratelimitagent \"github.com/giustech/n3x-plugin-ratelimit/agent\"\n    ratelimitctrl \"github.com/giustech/n3x-plugin-ratelimit/controller\"\n    coreagent \"github.com/giustech/n3x-plugin-core/agent\"\n    corectrl \"github.com/giustech/n3x-plugin-core/controller\"\n    \"github.com/giustech/n3x-sdk/plugin\"\n    \"github.com/giustech/n3x-sdk/schemagen\"\n)\n\nfunc main() {\n    err := schemagen.Run(os.Stdout, []schemagen.Entry{\n        {ID: \"giustech.ratelimit\", Half: plugin.HalfProxy, Plugin: ratelimitagent.Plugin()},\n        {ID: \"giustech.ratelimit\", Half: plugin.HalfController, Plugin: ratelimitctrl.Plugin()},\n        {ID: \"n3x.core\", Half: plugin.HalfProxy, Plugin: coreagent.Plugin()},\n        {ID: \"n3x.core\", Half: plugin.HalfController, Plugin: corectrl.Plugin()},\n    })\n    if err != nil {\n        os.Stderr.WriteString(err.Error() + \"\\n\")\n        os.Exit(1)\n    }\n}"
+      },
+      "response_example": {
+        "stdout, schemas encurtados com ... só aqui": "json\n{\"giustech.ratelimit\":{\"proxy\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"x-n3x-schema\":1,\"type\":\"object\",\"properties\":{...}},\"controller\":{...}},\"n3x.core\":{\"proxy\":{...},\"controller\":{...}}}"
+      },
+      "headers_semantics": [
+        "Tipo: sdk (API Go) e contrato com o builder",
+        "Por que reflexão e não go/types: o schema e a decodificação saem do mesmo modelo construído por reflexão sobre o C do Define[C], então não existem duas implementações que possam divergir. A análise estática teria de resolver a instância genérica de Define, reconhecer os tipos conhecidos pelo nome e reimplementar as regras, sem garantia de bater com o decodificador",
+        "Quando: passo 5 do n3x-plugin build, depois da análise estática do passo 4, que já recusou init() com efeito colateral e os demais riscos de executar código do plugin",
+        "Como: o builder gera main.go do auxiliar (formatado com go/format, entradas em ordem de ID e, em cada ID, proxy antes de controller), compila e executa com o toolchain da imagem, CGO_ENABLED=0, GOOS e GOARCH da máquina de build, o mesmo go.mod e go.sum do workspace, -mod=readonly, sem rede (GOPROXY=off, módulos já baixados no passo 2) e prazo de 60 s (hipóteses de flags e prazo)",
+        "Saída: stdout com um objeto JSON compacto; IDs em ordem de bytes; em cada ID, só as metades que o plugin tem; cada schema exatamente como MarshalJSON escreveu. O builder embute cada schema sem reformatar",
+        "Os dois artefatos (sidecar e controller) recebem os schemas das duas metades de todos os plugins, porque o painel rotula a config de proxy dentro do controller (FR-007)",
+        "O n3x-new schema-check (FDD 14) pode usar o mesmo pacote para gerar o schema de uma versão"
+      ],
+      "status_semantics": [
+        "Erro: saída 1 e stderr com uma linha por problema, prefixada por <id> <metade>:; o builder informa um código novo (proposta N3X-B014, \"config do plugin sem schema válido\", decidida na FDD 21)",
+        "ID repetido com a mesma metade, ID inválido ou Plugin nulo são erros de Run"
+      ],
+      "limits": {
+        "timeout": "Prazo de 60 s para a execução do programa auxiliar no build (hipótese)"
+      }
+    }
+  ],
+  "errors_exceptions_fallback": {
+    "error_matrix": [
+      {
+        "condition": "Struct com tipo ou tag inválidos",
+        "treatment": "SchemaOf devolve ErrInvalidSchema com todos os problemas (contrato 8)",
+        "notes": "Pego no go test do autor (FDD 07) e no build (proposta N3X-B014, FDD 21)"
+      },
+      {
+        "condition": "Default explícito ou implícito que viola o campo",
+        "treatment": "default_invalid no gerador",
+        "notes": "Nunca chega ao runtime"
+      },
+      {
+        "condition": "Config com campo desconhecido, tipo errado, ausente ou fora das regras",
+        "treatment": "ErrInvalidConfig com a lista completa (contrato 7)",
+        "notes": "Sidecar e controller não sobem (FR-001)"
+      },
+      {
+        "condition": "Config maior que 1 MiB, JSON inválido, aninhamento acima de 32",
+        "treatment": "size ou syntax, sem tentar mais nada",
+        "notes": "Sem panic"
+      },
+      {
+        "condition": "Mais de 100 problemas",
+        "treatment": "Lista com 100 itens e um truncated",
+        "notes": "Evita inundar o log"
+      },
+      {
+        "condition": "SecretOpener falha",
+        "treatment": "secret_open ou a regra do FieldError do opener",
+        "notes": "Texto original do erro descartado"
+      },
+      {
+        "condition": "Schema embutido de versão maior",
+        "treatment": "schema_version em ParseSchema",
+        "notes": "Operador usa imagem de sidecar ou controller mais nova"
+      },
+      {
+        "condition": "Schema embutido malformado ou editado à mão",
+        "treatment": "schema_keyword ou schema_value",
+        "notes": "Leitor estrito; só aceita o que o gerador produziria"
+      },
+      {
+        "condition": "Schema gerado no .so diferente do embutido",
+        "treatment": "O .so recusa subir (recomendação para as FDDs 15 e 17)",
+        "notes": "Prova de que entrypoint e .so usam o mesmo schema"
+      },
+      {
+        "condition": "C não é struct ou é ponteiro",
+        "treatment": "unsupported_type",
+        "notes": "Erro de programação do autor"
+      }
+    ],
+    "resilience_strategies": [
+      "Limite de tamanho da entrada e do schema",
+      "Limite de profundidade",
+      "Parse iterativo sem recursão ilimitada",
+      "Nenhum panic por dado de entrada (provado por fuzzing)",
+      "Limite de 100 problemas",
+      "Nenhum estado global mutável",
+      "Timeouts, retries, backoff e circuit breaker não se aplicam, porque o pacote não faz I/O"
+    ],
+    "fallback_policy": "não há fallback silencioso.\n- Valor inválido nunca é trocado pelo default; só a chave ausente recebe o default declarado no schema\n- Não há coerção de tipo (número para texto, texto para booleano)\n- null nunca vale \"ausente\", exceto na raiz da config\n- Sem opener, o texto do segredo é usado como recebido (o sidecar e o controller sempre passam opener; o sdktest não)",
+    "invariants": [
+      "Para todo C aceito e toda entrada x: a lista de problemas de DecodeConfig[C](x) é igual à de ParseSchema(SchemaOf[C]().MarshalJSON()).Validate(x), na mesma ordem",
+      "ParseSchema(b).MarshalJSON() devolve b para todo b gerado; SchemaOf[C] dá os mesmos bytes em qualquer execução e arquitetura",
+      "Normalize(Normalize(x)) é igual a Normalize(x); DecodeConfig[C](Normalize(x)) é igual a DecodeConfig[C](x) (com reflect.DeepEqual)",
+      "Todo default do schema passa no próprio schema",
+      "Nenhum Detail nem Error() contém valor recebido, trecho da entrada ou texto de erro do opener",
+      "Listas e maps decodificados nunca são nil",
+      "O SecretOpener só é chamado em nó de segredo cujo valor passou no tipo e nas regras, uma vez por valor, em ordem",
+      "Nenhuma função do pacote lê arquivo, variável de ambiente ou rede"
+    ]
+  },
+  "observability": {
+    "metrics": [
+      "O pacote não emite métricas. Ele roda só na subida (sidecar e controller) e no build; uma falha encerra o processo antes de existir endpoint de métricas, então não há o que contar. O sinal operacional é o container que não sobe (reinício pelo orquestrador)",
+      "Na CI do SDK: cobertura do pacote, benchmarks com -benchmem (BenchmarkDecodeConfig, BenchmarkSchemaOf, BenchmarkParseSchema) e resultado do fuzzing noturno"
+    ],
+    "logs": {
+      "format": "O pacote não loga. A superfície observável são os erros FieldError com Path, Rule e Detail\n\nQuem loga emite um registro por problema, com os campos path, rule e detail da FDD 01, mais plugin_id e instance quando houver. Exemplo no entrypoint do sidecar (FDD 15): {\"ts\":\"2026-10-20T14:00:00Z\",\"level\":\"error\",\"component\":\"config\",\"msg\":\"config de plugin inválida\",\"plugin_id\":\"giustech.ratelimit\",\"instance\":\"rl-api\",\"path\":\"plugins[2].config.limit\",\"rule\":\"min\",\"detail\":\"abaixo do mínimo 1\"}\n\nExemplo no build (FDD 21): erro N3X-B014: giustech.ratelimit proxy: types.ProxyConfig.Window: opção desconhecida \"mn\" na tag n3x [tag_unknown]\n\nProteção de dados: nenhum valor de config entra em mensagem, nem de campo que ainda não é plugin.Secret. Garantido pelo teste de canário (seção 9) e pelos modelos de Detail do contrato 7. Chave de map aparece no caminho; o guia do autor avisa para nunca usar segredo como chave",
+      "fields": [
+        "path: caminho do campo (Path do FieldError), pela convenção da L-34",
+        "rule: código estável da regra (Rule do FieldError)",
+        "detail: texto em pt-BR para pessoas (Detail do FieldError), sem valor recebido",
+        "plugin_id: ID do plugin, quando houver",
+        "instance: nome da instância, quando houver"
+      ]
+    },
+    "tracing": {
+      "sampling": "Sem tracing (ADR-009 de plataforma). Não há spans neste pacote"
+    },
+    "dashboards_alerts": [
+      "Não se aplicam a uma biblioteca de subida. O efeito aparece em sinais de quem usa: container em reinício (CrashLoopBackOff no Kubernetes) com a mensagem de config no log, e build reprovado com o código da FDD 21 na CI do operador"
+    ]
+  },
+  "dependencies_compatibility": {
+    "dependencies": [
+      {
+        "component": "Go",
+        "min_version": "1.26",
+        "notes": "Generics, reflect e Unwrap() []error (ADR-021)"
+      },
+      {
+        "component": "Biblioteca padrão",
+        "min_version": "(a do Go)",
+        "notes": "plugin/ e schemagen importam só encoding/json, reflect, strconv, time, unicode/utf8, errors, io e similares; conferido com go list -deps"
+      },
+      {
+        "component": "plugin/ da FDD 01",
+        "min_version": "mesma versão do SDK",
+        "notes": "FieldError, FieldErrors, Half, ParseID e a convenção de caminho (L-34)"
+      },
+      {
+        "component": "yamlconv da FDD 01",
+        "min_version": "mesma versão do SDK",
+        "notes": "Usado pelos chamadores para converter YAML; nunca importado por plugin/"
+      },
+      {
+        "component": "FDD 03 (plugin.Secret)",
+        "min_version": "mesma versão do SDK",
+        "notes": "Entra pelo ponto de extensão; a marca x-n3x-secret já faz parte da versão 1 do subconjunto"
+      },
+      {
+        "component": "FDDs 05 e 08 (Define[C])",
+        "min_version": "consumidores",
+        "notes": "Implementam ConfigSchemer e chamam DecodeConfig"
+      },
+      {
+        "component": "n3x-builder (FDDs 21 e 22)",
+        "min_version": "consumidor",
+        "notes": "Gera e roda o auxiliar com schemagen; embute os bytes sem reformatar"
+      },
+      {
+        "component": "n3x-sidecar (FDDs 15 e 17) e n3x-controller (FDDs 30 e 32)",
+        "min_version": "consumidores",
+        "notes": "ParseSchema, Validate, DecodeConfig e PrefixErrors"
+      },
+      {
+        "component": "n3x-plugin-core (FDDs 36 e 37) e painel (FDDs 44 e 45)",
+        "min_version": "consumidores",
+        "notes": "Normalize, MaskSecrets, Walk e Node"
+      }
+    ],
+    "compatibility_guarantees": [
+      "Semver estrito do módulo desde a v1.0.0; antes disso, v0.x pode mudar este contrato (ADR-021)",
+      "Mesma struct, mesmos bytes de schema em toda a major do SDK (exigência do build reproduzível e da comparação no .so). Mudança no mapeamento de tipos, na ordem das palavras-chave ou nas formas canônicas exige major",
+      "Formas canônicas da saída de Normalize (duração, tamanho, números, ordem) congeladas na major, porque entram no hash da config efetiva (FDD 37); mudar uma delas faria todo sidecar parecer com config nova",
+      "Gramática das tags e subconjunto só crescem por adição, em minor do SDK. Opção nova de tag é erro numa imagem antiga (tag_unknown), então o plugin que a usa sobe o limite inferior da faixa sdk do manifesto e a imagem antiga falha antes com N3X-B004 (mesma regra da FDD 01)",
+      "Palavra-chave nova no subconjunto vem com x-n3x-schema novo; o gerador escreve a menor versão necessária; o leitor recusa versão maior que a sua com schema_version",
+      "Códigos de regra (Rule) estáveis na major",
+      "Evolução da config do plugin só por adição dentro da major do plugin (ADR-020): campo novo é opcional por construção (default implícito ou ponteiro) a menos que seja required, caso que o schema-check da FDD 14 recusa"
+    ]
+  },
+  "acceptance_criteria": [
+    "Testes de tabela por regra de config: cada uma das 13 linhas da tabela do contrato 7 tem pelo menos um caso que produz exatamente aquele Path e aquela Rule, para cada Kind em que a regra se aplica",
+    "Testes de tabela do gerador: cada linha da tabela do contrato 8 tem pelo menos um caso; cada tipo proibido listado em unsupported_type tem o seu",
+    "Mapeamento: golden do schema de cada linha da tabela do contrato 2, incluindo os limites implícitos de int8, uint16, int64 e uint64",
+    "Golden das structs de referência em plugin/testdata/schema/: ratelimit (contrato 1), core_controller (imita a seção do core no n3x.yaml do controller, com memory_limit: 128MiB e users[].password_hash como segredo), allkinds (todos os tipos aceitos) e empty (struct{}). Bytes iguais em 100 execuções seguidas e nas CIs amd64 e arm64",
+    "Ida e volta: para cada golden, ParseSchema(b).MarshalJSON() é igual a b",
+    "Equivalência: corpus com pelo menos 200 entradas por struct de referência (válidas, uma por regra violada e combinações) dá a mesma lista de Path e Rule, na mesma ordem, por DecodeConfig[C] e por ParseSchema(...).Validate, e a mesma saída de Normalize. FuzzEquivalence roda 5 minutos na CI noturna sem divergência",
+    "Idempotência: Normalize(Normalize(x)) == Normalize(x) e DecodeConfig(Normalize(x)) igual a DecodeConfig(x) com reflect.DeepEqual, sobre todo o corpus",
+    "Canário: cada texto e chave do corpus é trocado por um marcador aleatório de 16 caracteres, inclusive os segredos e o texto de erro devolvido por um opener de teste; nenhum Error() nem Detail contém qualquer marcador (0 ocorrência)",
+    "Defaults: campo ausente recebe o default; required com default, default fora do enum e int com min=1 sem default, sem required e sem ponteiro são recusados no gerador",
+    "Exemplo de erros da seção 5: a entrada do contrato 7 produz exatamente as 7 linhas mostradas, na ordem",
+    "Estrito: Limit em vez de limit dá unknown_field; \"1\" em campo inteiro e 1 em campo de texto dão type; 100.5 em inteiro dá type; null em ponteiro dá type; chave repetida dá duplicate; raiz null e entrada vazia valem {}",
+    "Tamanho e duração: as entradas de referência do contrato 3 dão o resultado mostrado; 9007199254740993Ti dá format",
+    "Opener: um opener de teste é chamado exatamente uma vez por segredo presente e válido, com o caminho certo e em ordem, e nunca para segredo com tipo errado",
+    "Limites: entrada de 1 MiB mais 1 byte dá size; aninhamento 33 dá syntax; 150 problemas dão 100 itens mais truncated; schema de 256 KiB mais 1 byte dá size em ParseSchema; x-n3x-schema: 2 dá schema_version",
+    "schemagen: a entrada do contrato 9 com plugins falsos gera stdout igual ao golden; uma entrada com tag inválida não escreve nada em w e devolve todos os problemas",
+    "Fuzzing: FuzzDecodeConfig, FuzzParseSchema, FuzzNormalize, FuzzParseSize e FuzzEquivalence rodam 5 minutos por alvo na CI noturna sem panic (hipótese de duração); o corpus inicial inclui os exemplos desta FDD",
+    "Desempenho: BenchmarkDecodeConfig com a struct ratelimit e entrada de 10 KiB em até 500 µs por operação, e com 1 MiB em até 50 ms, no runner da CI (hipótese)",
+    "Dependências: go list -deps ./plugin ./schemagen só lista pacotes da biblioteca padrão e do próprio SDK; go vet e go test -race ./plugin/... ./schemagen/... passam",
+    "Cobertura: no mínimo 90% de linhas nos arquivos de config de plugin/ (hipótese, igual à FDD 01)"
+  ],
+  "risks": [
+    {
+      "risk": "Divergência entre a validação só pelo schema (entrypoint) e a decodificação pela struct (.so)",
+      "probability": "medium",
+      "impact": "o entrypoint aceita e o .so recusa (o Envoy não sobe depois de o container passar na validação), ou o contrário",
+      "mitigation": [
+        "Um validador só: DecodeConfig roda o mesmo Validate sobre o schema gerado e só depois preenche a struct",
+        "Defaults implícitos e limites de inteiro escritos no schema, para o schema descrever tudo que a struct impõe",
+        "Decodificação própria (UnmarshalJSON) proibida na config",
+        "Teste de ida e volta, corpus de equivalência e fuzzing diferencial",
+        "Comparação byte a byte, no .so, do schema gerado com o embutido (recomendação para as FDDs 15 e 17)"
+      ],
+      "contingency_plan": "patch do SDK corrigindo o validador; como os dois lados usam o mesmo código, a correção vale para os dois na próxima imagem"
+    },
+    {
+      "risk": "Schema não determinístico quebra o build reproduzível",
+      "probability": "low",
+      "impact": "o mesmo Dockerfile gera .so com manifesto diferente, e a comparação no .so falha sem motivo real",
+      "mitigation": [
+        "Ordem de declaração dos campos, ordem fixa das palavras-chave, nenhuma iteração sobre map do Go, números no formato do encoding/json",
+        "Golden files em 100 execuções e nas duas arquiteturas",
+        "Builder embute os bytes sem reformatar"
+      ],
+      "contingency_plan": "patch do gerador; até lá, a comparação no .so pode ser desligada por uma flag de build (hipótese, decidir na FDD 17)"
+    },
+    {
+      "risk": "Subconjunto pequeno demais para um plugin real",
+      "probability": "medium",
+      "impact": "o autor não consegue expressar uma regra e a valida no New, com mensagem fora do padrão; ou espera uma minor do SDK",
+      "mitigation": [
+        "Protótipo de rate limit e plugin core validados com pré-releases v0.x antes da v1.0.0 (ADR-021)",
+        "Ponteiro para opcional, map com chave livre, struct aninhada, duração e tamanho já na versão 1",
+        "Erro do New também aponta o campo, pelo guia do autor"
+      ],
+      "contingency_plan": "versão 2 do subconjunto em minor do SDK (regras por item, pattern), por adição"
+    },
+    {
+      "risk": "Segredo vazando em mensagem de erro",
+      "probability": "low",
+      "impact": "valor sensível no log do sidecar ou do controller, inclusive de campo que o autor esqueceu de tipar como plugin.Secret",
+      "mitigation": [
+        "Detail sem valor em todas as regras, inclusive syntax (só a posição)",
+        "Erro do opener descartado ou trocado por FieldError da FDD 03",
+        "Teste de canário em toda a matriz de erros"
+      ],
+      "contingency_plan": "patch do SDK e rotação do segredo exposto pelo operador"
+    },
+    {
+      "risk": "Execução de código do plugin no programa auxiliar do build",
+      "probability": "low",
+      "impact": "um plugin com inicialização de variável de pacote que faz I/O ou trava atrasa ou contamina o build",
+      "mitigation": [
+        "Análise estática (passo 4) antes do auxiliar (passo 5), com init() com efeito colateral já recusado",
+        "Plugin() sem efeito colateral (ADR-015)",
+        "Auxiliar sem rede e com prazo de 60 s (hipótese, aplicada na FDD 21)"
+      ],
+      "contingency_plan": "endurecer a análise estática para inicialização de variáveis de pacote, na FDD 24"
+    },
+    {
+      "risk": "Rigidez incomoda o operador",
+      "probability": "medium",
+      "impact": "value: 1 sem aspas, timeout: 5 sem unidade ou memory: 256M viram erros que parecem implicância",
+      "mitigation": [
+        "Mensagens com o formato esperado e exemplo (ex.: 256Mi)",
+        "Aceitar as duas grafias reais da plataforma para tamanho (Mi e MiB) e número inteiro em bytes",
+        "Exemplos de n3x.yaml com aspas nos guias (FDD 47)"
+      ],
+      "contingency_plan": "aceitar novos formatos por adição em minor do SDK, sem mudar a forma canônica"
+    },
+    {
+      "risk": "Mudança de config efetiva a cada atualização de plugin",
+      "probability": "high",
+      "impact": "um plugin que ganha campo novo com default muda o hash da config efetiva sem o operador mudar o n3x.yaml, e o painel mostra uma versão nova",
+      "mitigation": [
+        "Comportamento correto e documentado: a config em uso de fato mudou (novo default em vigor)",
+        "Formas canônicas congeladas na major, para só mudanças reais alterarem o hash"
+      ],
+      "contingency_plan": "nenhum; o diff do painel (FDD 44) mostra exatamente o campo novo"
+    }
+  ]
+}
