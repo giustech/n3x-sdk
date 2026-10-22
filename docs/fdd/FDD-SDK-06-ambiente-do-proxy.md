@@ -71,6 +71,18 @@ Esta entrevista achou dois problemas novos:
 - FDD 15 (SID-01) usada como fonte: tabela "Parte 3" do `n3x.yaml` (struct `config.PluginLimits` com `BackgroundMaxTasks` e `DialMaxConns`, 0 igual ao padrão), faixas de `controller.timeouts.call` (100 ms a 60 s) e `controller.timeouts.login` (1 s a 60 s), regra "`core/config` não importa `proxy/`" e a métrica de plataforma `n3x_config_secrets_in_clear`
 - FDD 26 (SID-06) usada como fonte: L-16 fechada lá (admin do Envoy só em `/tmp/n3x/admin.sock`, sockets internos em `/tmp/n3x`, portas de loopback 17001 e 17090 reservadas em `core/envoycfg`); aplicada aqui ao `env.Dial` pela `DialDenyList` (contrato 4)
 
+**Decisões aprovadas na clarificação**
+- `env.Controller()` só aceita chamadas de plugins ao próprio namespace gRPC (`ErrForeignService`) e só com `ctx` derivado de uma tarefa de fundo (`ErrRequestPath` em qualquer outro caso), confirmado como regra da v1. O PRD (FR-002 e FR-012) e o HLD devem registrar a regra, e a FDD 38 (outro repositório) a implementa na visão do `Env`
+- No sidecar, histogram sai como `_bucket` e `_count`, sem `_sum`; counter publica a parte inteira e gauge é arredondado, sem negativo; no controller os valores são exatos, com `_sum`. Limitação aceita na v1
+- Os namespaces de plugin `plugin`, `controller`, `sidecar`, `build` e `config` ficam reservados, além de `n3x`. Isso altera o ADR-012 e a regra `reserved_namespace` da FDD-01 (`ParseID`/`CheckNamespace`), e a FDD 20 (builder, outro repositório) deve recusar esses namespaces no build
+- A lista de connectors não é validada no build da v1: fica só como recomendação no guia do autor (`net/http` pelo `env.HTTPClient()`, go-redis e pgx pelo `env.Dial`), com teste de longa duração com connectors nas FDDs 48 ou 50. A pendência "lista de bibliotecas aprovadas" do HLD fica resolvida por essa decisão
+- Os pacotes `telemetry/` e `internal/` (inclui `internal/clock`) entram no módulo do SDK e precisam constar na árvore de pacotes do HLD e no ADR-011
+- Os demais valores e hipóteses (8 tarefas e 16 conexões por plugin com faixas até 64 e 256, backoff de 1 s a 60 s, prazos de 5 s, 30 s e 10 s, `ShutdownGrace` de 2 s, buckets padrão, regras de nome de métrica e limites de log) ficam aceitos como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Dependem de outros repositórios: teto de chamada unária, isenção do `Login` e streams (L-08, decisão final na FDD 38), implementação de `Background`, `Dial`, `HTTPClient` e contenção (FDD 18), registro, exportação e escrita de logs (FDD 16), validação de `runtime.plugin_limits` (FDDs 15 e 30), capacidade do core para `n3x_controller_*` (FDD 09), análise estática (FDD 24) e regra de build de namespaces (FDD 20)
+- Em aberto: se `runtime.plugin_limits` com `background` e `dial` vale também para a metade de controller depende de a FDD 08 dar `Background` e `Dial` com limites ao `ctrl.Env` (P-05)
+
 ---
 
 ### 2. Objetivos técnicos

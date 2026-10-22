@@ -44,7 +44,7 @@ Esta entrevista achou seis problemas novos:
 - Um processo do Envoy tem um único runtime do `.so` e uma única conexão compartilhada (FDD 38, L-45)
 - A config do sidecar é estática (ADR-007 do `n3x-sidecar`): identidade, manifesto e config efetiva não mudam durante a vida do processo
 - O controller roda com uma réplica (ADR-001 do `n3x-sdk`)
-- `runtime/debug.ReadBuildInfo` devolve o módulo principal também em binários de `go test` (hipótese; confirmar na FDD 12)
+- `runtime/debug.ReadBuildInfo` devolve o módulo principal também em binários de `go test` (confirmado como padrão; o spike de verificação fica como pendência na FDD 12)
 
 **Restrições**
 - `plugin/` usa só a biblioteca padrão; `proxy/` não importa `controller/` e `controller/` não importa `proxy/` (ADR-011 e FDDs 01, 06 e 08)
@@ -64,7 +64,7 @@ Esta entrevista achou seis problemas novos:
   - **L-10 fechada (restante, a parte do formato veio da FDD 01):** uma instância da metade de proxy do core por processo, criada pelo executor antes das demais, com nome `core`, config `{}` e todos os parâmetros pela visão `Sidecar`; criada também no modo standalone, onde fica inativa; metade só de fundo exclusiva do core na v1 (contrato 4)
   - **L-63 fechada:** `ctrl.HostFacts{RootUser}` entregue pelo método novo `Plugin.CheckHost` à interface `ctrl.HostValidator` do tipo de config do core, depois da `Validate`; capacidade privilegiada (contrato 15)
   - **L-07 (interface definida aqui; detalhes do mascaramento na FDD 37):** o runtime entrega a config de cada instância normalizada com os textos `ENC[...]` intactos, o texto de segredo em claro trocado por vazio e uma `SecretMark` por campo segredo (`sealed`, `in_clear` ou `empty`, com a impressão digital de `plugin.SecretFingerprint`); o `controller.secret` chega como `plugin.Secret`, com `Fingerprint()` e `InClear()` (contrato 6)
-- Lacunas só registradas: L-08 (teto e exceção do `Login`, FDD 38), L-11 (nome do login, FDD 36, com recomendação no contrato 10), L-18 (drenagem no Istio, FDD 49), L-37 (IP no painel, FDD 34, com a mesma regra do contrato 14), L-68 e L-69 (origem de endereço e versão do Envoy, FDD 25), L-70 (`breaker_open` contra `plugin_disabled`, FDD 18)
+- Lacunas só registradas: L-08 (teto e exceção do `Login`, FDD 38), L-11 (nome do login, FDD 36, com a decisão confirmada no contrato 10: serviço próprio `Login`), L-18 (drenagem no Istio, FDD 49), L-37 (IP no painel, FDD 34, com a mesma regra do contrato 14), L-68 e L-69 (origem de endereço e versão do Envoy, FDD 25), L-70 (`breaker_open` contra `plugin_disabled`, FDD 18)
 - Pedidos de FDDs anteriores atendidos:
   - FDD 01 (P-01): exclusividade, quantidade e criação da metade só de fundo (contrato 4)
   - FDD 03 (P-01): L-07 com `plugin.SecretFingerprint` (marcas dos plugins) e `Secret.Fingerprint()` (`controller.secret`); segredo vazio vira `empty` e não gera `secret_in_clear` (contratos 6 e 7)
@@ -73,6 +73,20 @@ Esta entrevista achou seis problemas novos:
   - FDD 07 (H-26 e P-10): nome `core` (`id.Name()`) e uma instância por processo
   - FDD 08 (P-01): privilegiadas conferidas depois do `New` e antes do `Start` (contrato 2); `ctrl.CoreEnv` (contrato 14); nome do root por `CheckHost` (contrato 15); `StateCell` do core para "só o root entra" (contrato 16); tabela pública (contrato 10); `Identity.Session` igual ao nonce do token (contrato 11)
 
+**Decisões aprovadas na clarificação**
+- L-11: o login fica num serviço próprio `n3x.plugins.n3x.core.v1.Login` com 1 método unário `Login`; `Register`, `Heartbeat` e `Exit` ficam no serviço `Core`. Isso exige mudar o ADR-007 do `n3x-plugin-core` e a FDD 36 (outro repositório)
+- IP do chamador do `Login`: campo novo `grpc.trusted_proxies` (lista de CIDRs, vazio por padrão) no `n3x.yaml` do controller; o IP vem do par TCP e, só se o par estiver em `trusted_proxies`, de `x-forwarded-for` lido da direita para a esquerda. O campo entra no schema do controller (FDD 30, outro repositório); o PRD FR-005 deve ser esclarecido no Workflow 3
+- A metade de proxy só de fundo (`phases: []`) é exclusiva do core na v1; plugin de terceiro é recusado no build (FDD 20) e no runtime (`privileged.background_only`). Abrir a terceiros fica como adição futura em minor
+- Estado do core: só o próprio core declara `degraded` (via `env.State().Degraded`); o host atribui `failed` ao core por panic repetido em `Authenticate` ou `CheckUser` (limiar definido na FDD 32, outro repositório), com recuperação automática quando o core volta a `ok`
+- Os pacotes novos `internal/privileged` e as APIs de runtime públicas (`proxy.NewEventQueue`, `proxy.NewPluginConfig`) devem constar no HLD/ADR-011; análise estática na FDD 24 impede uso por plugins
+- As demais hipóteses numéricas, de teste, de nomes e de baixo risco ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Documentar lacunas de `Seq` quando há descarte de eventos e que "trava curta" não é bloqueio longo; reescrever a descrição de `n3x_sidecar_events_total` (aceito vs entregue); fixar que `issuedAt` é o horário local de recebimento do token; explicitar que `RolePlugin` (chamadas PluginAPI em processo) não passa por `Authenticate` nem pela tabela pública; corrigir o formato do log `capabilities` (`sidecar` não é Privilege); registrar `kind="auth"` nas FDDs 06 e 08 e no log `plugin_panic` vs `privileged_misbehavior`
+- Spike de `runtime/debug.ReadBuildInfo` em binário de `go test` e fallback (FDD 12); regra do tipo dinâmico para embrulhos (`Adapt[T]`) e para `phases` não vazio do core no manifesto; nota no kit sobre texto malformado com prefixo `ENC[` classificado como `sealed`
+- Divergências para o Workflow 3: texto do ADR-019 linha ~18 diz `WriteAudit` síncrono com recusa por falha, mas a linha ~40 e o HLD dizem reservado à v2; HLD tabela "Capacidades privilegiadas do core" precisa listar `CoreEnv`, `Sidecar`, `HostValidator`/`CheckHost`, `ControllerManifest`/`CallerIP`; PRD FR-005 sobre `trusted_proxies`; ADR-007 do core (`Login` como serviço próprio)
+- Dependem de outros repositórios: `n3x-plugin-core` (FDDs 36 a 45), `n3x-sidecar` (FDDs 15 a 18, 25, 29, 38, 49), `n3x-controller` (FDDs 30 a 34, 47), `n3x-builder` (FDDs 20 a 22 e 24)
+
 ---
 
 ### 2. Objetivos técnicos
@@ -80,12 +94,12 @@ Esta entrevista achou seis problemas novos:
 - **Nenhuma capacidade privilegiada fora do core.** Invariante: um plugin que não seja `n3x.core` do módulo `github.com/giustech/n3x-plugin-core` e implemente ou declare qualquer privilégio da tabela do contrato 2 faz a subida falhar, no sidecar, no controller e no kit. Medida: 100% dos vetores de recusa da seção 9 recusados com o mesmo `Path` e a mesma `Rule` no runtime real e no falso.
 - **Origem que o plugin não forja.** Invariante: a origem é o par (ID, módulo) gravado pelo builder no registro gerado, conferido contra o manifesto embutido e contra o pacote do tipo dinâmico da instância; nenhum valor vindo do código do plugin entra na decisão.
 - **Token e handles fora do alcance dos outros plugins.** Invariante: `env.(proxy.CoreEnv)` e `env.(ctrl.CoreEnv)` são falsos para todo plugin que não é o core; o interceptor do core é o mais interno da conexão compartilhada; o host retira `authorization` dos metadados antes de qualquer handler. Medida: teste com o kit e com `bufconn` (seção 9).
-- **Evento nunca segura o worker.** Medida: `EventQueue.Push` nunca bloqueia; 100.000 `Push` sem consumidor terminam em menos de 50 ms no runner da CI e a fila fica em no máximo `MaxPendingEvents` (1.024) itens (hipótese de tempo).
+- **Evento nunca segura o worker.** Medida: `EventQueue.Push` nunca bloqueia; 100.000 `Push` sem consumidor terminam em menos de 50 ms no runner da CI e a fila fica em no máximo `MaxPendingEvents` (1.024) itens (confirmado).
 - **Rajada contida.** Medida: no máximo 1 evento `panic` aceito por instância de plugin por segundo; os demais somam em `Suppressed` do próximo evento daquela instância e em `n3x_sidecar_events_suppressed_total`.
-- **Evento entregue rápido.** Medida: com o core esperando em `NextEvent`, um `Push` chega a ele em até 10 ms (mediana de 1.000 eventos, hipótese).
+- **Evento entregue rápido.** Medida: com o core esperando em `NextEvent`, um `Push` chega a ele em até 10 ms (mediana de 1.000 eventos, confirmado).
 - **Saída dentro da janela.** Medida: depois do cancelamento das tarefas, a chamada `Exit` feita com `ExitContext()` passa pelas regras da visão do controller (FDD 06) e termina em até `ExitTimeout` (1,5 s), dentro dos 2 s do `ShutdownGrace`.
 - **Nenhum segredo de outro plugin em claro no core.** Invariante: o texto de um segredo que veio sem `ENC[...]` nunca aparece em `ConfigInput`; o `controller.secret` nunca aparece em `ConfigInput.Sidecar`. Medida: canário `n3x-canary-` ausente de todos os bytes entregues (`secrettest.Leaks`, FDD 03).
-- **Autenticação barata.** Meta para o core (FDD 39), conferida pelo kit (FDD 12): `Authenticate` com 0 alocações e p99 até 20 µs com token válido (hipótese de tempo; 0 alocações vem do HLD do `n3x-plugin-core`).
+- **Autenticação barata.** Meta para o core (FDD 39), conferida pelo kit (FDD 12): `Authenticate` com 0 alocações e p99 até 20 µs com token válido (confirmado; 0 alocações vem do HLD do `n3x-plugin-core`).
 - **Mesmo comportamento no kit e no runtime.** Medida: as suítes de conformidade de `proxy.Sidecar` e de `ctrl.CoreEnv` (FDD 12) passam no kit, no sidecar e no controller.
 
 ---
@@ -127,16 +141,16 @@ Esta entrevista achou seis problemas novos:
 - Detecção da drenagem no modo Istio (L-18): FDD 49 (SID-11)
 - Geração do `id` de idempotência, envio dos eventos e do `Exit`: FDD 42 (CORE-06)
 - Falsos do kit e suítes de conformidade em si: FDD 12 (SDK-12)
-- Fora da v1, por adição em minor quando houver caso real (hipótese): metade só de fundo de terceiros, sinal de drenagem para outros plugins, PROXY protocol na `17443`, `WriteAudit` chamado pelo host, `Sessions().Revoke` em uso
+- Fora da v1, por adição em minor quando houver caso real (confirmado): metade só de fundo de terceiros (decisão: exclusiva do core na v1), sinal de drenagem para outros plugins, PROXY protocol na `17443`, `WriteAudit` chamado pelo host, `Sessions().Revoke` em uso
 
 ---
 
 ### 4. Fluxos detalhados e diagramas
 
 **Fluxo principal: subida do `.so` (lado do contrato; a orquestração é da FDD 17)**
-1. O `main` gerado entrega ao runtime, para cada plugin compilado, a entrada `{ID, Module, Proxy}`, com `Module` gravado pelo builder a partir do `plugins.json` e do `builder.yaml` (FDD 21). O runtime confere `Module` contra `plugins[].module` do manifesto embutido (FDD 22); diferença recusa a subida (`privileged_origin`, hipótese).
+1. O `main` gerado entrega ao runtime, para cada plugin compilado, a entrada `{ID, Module, Proxy}`, com `Module` gravado pelo builder a partir do `plugins.json` e do `builder.yaml` (FDD 21). O runtime confere `Module` contra `plugins[].module` do manifesto embutido (FDD 22); diferença recusa a subida (`privileged_origin`, confirmado).
 2. Para cada plugin do manifesto, o runtime chama `proxy.CheckPrivileged(id, module, manifesto, nil)`. Plugin que não é o core com metade de proxy só de fundo (`phases: []`) recusa a subida (`privileged_capability` em `privileged.background_only`).
-3. **Instância do core, primeiro e uma vez por processo** (hipótese): o runtime monta o `Env` normal da instância `core` (FDD 06) e o embrulha num `proxy.CoreEnv` cuja visão `Sidecar()` já tem identidade, parâmetros do controller, manifesto e `ConfigInput`. Chama `Instantiate([]byte("{}"), coreEnv, opener)` sob `recover`, sela e chama `proxy.CheckPrivileged(id, module, manifesto, inst)`, que confere:
+3. **Instância do core, primeiro e uma vez por processo** (confirmado): o runtime monta o `Env` normal da instância `core` (FDD 06) e o embrulha num `proxy.CoreEnv` cuja visão `Sidecar()` já tem identidade, parâmetros do controller, manifesto e `ConfigInput`. Chama `Instantiate([]byte("{}"), coreEnv, opener)` sob `recover`, sela e chama `proxy.CheckPrivileged(id, module, manifesto, inst)`, que confere:
    - o tipo dinâmico da instância declarado num pacote do módulo do core (`privileged_origin`)
    - `ConnInterceptorProvider` implementado (`core_capability_missing`)
    - nenhum hook de requisição (`background_only_hooks`)
@@ -149,7 +163,7 @@ Esta entrevista achou seis problemas novos:
 **Fluxo principal: subida do controller (lado do contrato; a orquestração é da FDD 32)**
 1. `host.Run` recebe as entradas `{ID, Module, Plugin}` geradas pelo builder e confere `Module` contra o manifesto do próprio binário (FDD 30).
 2. **Fase de config** (FDD 08), em ordem de ID: o host chama `ctrl.PrivilegesOf(p, nil)`, que só enxerga o `HostValidator` do tipo de config. Plugin que não é o core com esse privilégio recusa a subida (`privileged_capability`). Para o core, o host chama `p.CheckHost(secao, ctrl.HostFacts{RootUser: root.user}, opener)`; para os demais, `p.Check(secao, opener)`. O subcomando `n3x-controller validate` faz o mesmo (FDD 30).
-3. **Fase de instâncias**: o core primeiro (hipótese), depois os demais em ordem de dependência. Para o core, o host monta um `ctrl.CoreEnv` (o `Env` da FDD 08 mais `Credentials`, `Sessions`, `ControllerManifest` e `CallerIP`); para os demais, o `Env` comum.
+3. **Fase de instâncias**: o core primeiro (confirmado), depois os demais em ordem de dependência. Para o core, o host monta um `ctrl.CoreEnv` (o `Env` da FDD 08 mais `Credentials`, `Sessions`, `ControllerManifest` e `CallerIP`); para os demais, o `Env` comum.
 4. Depois do `New` e do selo, o host chama `ctrl.CheckPrivileged(id, module, p, inst)`. Plugin que não é o core com `PublicGRPC`, `Authenticate`, `CheckUser`/`ChangePassword` ou `WriteAudit` recusa a subida, obrigatório ou opcional (FDD 08, H-05). Core sem `PublicGRPC`, `Authenticate` ou `UserDirectory` recusa a subida (`core_capability_missing`).
 5. Ordem por plugin (FDD 08 com o acréscimo desta FDD): `Start`, `GRPC`, `PublicGRPC` (só o core), `PluginAPI`, `Routes`, `Cards`, `Close` do registrador. O `Close` confere as regras da tabela pública.
 6. Depois de todos: o host liga o `Authenticate` ao interceptor de autenticação (FDD 33), monta o serviço da tabela pública na `17443` sem sessão, liga o `CheckUser` ao login do painel (FDD 34) e loga `capability_unused` se o core implementar `WriteAudit` (sem chamá-lo na v1).
@@ -188,16 +202,16 @@ Esta entrevista achou seis problemas novos:
 6. Sem saída em 5 s, SIGKILL (ADR-006 do `n3x-sidecar`)
 
 **Fluxos alternativos e exceções**
-- **Modo standalone:** a instância `core` é criada e fica inativa: `env.Controller()` devolve `ErrStandalone`, `Sidecar().ControllerSettings()` devolve `false`, `NextEvent` devolve `ErrStandalone` na hora e `ConnInterceptors()` não é chamado. O runtime não mantém a fila; os eventos só viram log e métrica (hipótese)
+- **Modo standalone:** a instância `core` é criada e fica inativa: `env.Controller()` devolve `ErrStandalone`, `Sidecar().ControllerSettings()` devolve `false`, `NextEvent` devolve `ErrStandalone` na hora e `ConnInterceptors()` não é chamado. O runtime não mantém a fila; os eventos só viram log e métrica (confirmado)
 - **Modo Istio:** `Draining()` não fecha até a FDD 49 resolver a L-18; o `Exit` sai com `reason` `sigterm` pela janela de desligamento
 - **Validação do bootstrap** (`N3X_ENVOY_VALIDATE=1`, FDD 26): o `.so` não chama `New` de ninguém, inclusive do core
 - **Config do filtro criada mais de uma vez:** a instância do core continua única por processo (singleton do runtime, FDD 17 com a FDD 38, L-45)
 - **Panic no `New` do core, no `ConnInterceptors()` ou no interceptor:** os dois primeiros recusam a subida; no interceptor, o runtime contém o panic, a chamada falha com `Internal` e conta em `n3x_plugin_panics_total{plugin="n3x.core"}`
 - **Panic em `Authenticate` ou `CheckUser`:** o host contém; gRPC responde `INTERNAL` com mensagem genérica, o painel recusa o login com a mensagem genérica; `n3x_controller_plugin_panics_total{plugin="n3x.core",kind="auth"}`
-- **Core `degraded` ou `failed`:** só o root entra no painel; com `failed`, o gRPC responde `UNAVAILABLE` sem chamar o `Authenticate`
+- **Core `degraded` ou `failed` (confirmado):** só o root entra no painel; com `failed`, o gRPC responde `UNAVAILABLE` sem chamar o `Authenticate`. Só o próprio core declara `degraded`; o host atribui `failed` por panic repetido em `Authenticate` ou `CheckUser` (limiar na FDD 32) e recupera sozinho quando o core volta a `ok`
 - **Plugin que não é o core tenta `env.(proxy.CoreEnv)` ou `env.(ctrl.CoreEnv)`:** a type assertion dá falso; não há erro nem log, porque não houve acesso
 - **ID `n3x.core` vindo de outro módulo:** impossível depois do build (`N3X-B007` e `N3X-B008`); se chegar à subida, recusa com `privileged_origin`
-- **Proxy L7 na frente da `17443` sem `grpc.trusted_proxies`:** o IP é o do proxy; o host loga `caller_ip_proxy_suspected` uma vez por minuto quando chega `x-forwarded-for` de um par não confiável (hipótese) e o bloqueio por serviço continua valendo
+- **Proxy L7 na frente da `17443` sem `grpc.trusted_proxies`:** o IP é o do proxy; o host loga `caller_ip_proxy_suspected` uma vez por minuto quando chega `x-forwarded-for` de um par não confiável (confirmado) e o bloqueio por serviço continua valendo
 
 **Diagramas**
 
@@ -306,7 +320,7 @@ sequenceDiagram
   ```
 - Método: n/a (chamada local)
 - Semântica:
-  - `IsCoreOrigin` é verdadeiro se, e só se, `id == CoreID()` e `module` é exatamente `CoreModule` ou `CoreModule + "/v<N>"` com `N` inteiro maior ou igual a 2, sem zero à esquerda (sufixo de major do Go, hipótese). Comparação sensível a maiúsculas, sem normalizar
+  - `IsCoreOrigin` é verdadeiro se, e só se, `id == CoreID()` e `module` é exatamente `CoreModule` ou `CoreModule + "/v<N>"` com `N` inteiro maior ou igual a 2, sem zero à esquerda (sufixo de major do Go, confirmado). Comparação sensível a maiúsculas, sem normalizar
   - `CoreID()` devolve um valor (não uma variável exportada), para nenhum código conseguir trocá-lo
   - Ficam no `plugin/` porque o builder (`core_invalid`, FDD 20), o `core/config` (`core_implicit`, FDD 15), o executor, o host e o kit usam a mesma constante; `plugin/` continua só com a biblioteca padrão
   - **Origem em runtime:** `module` vem sempre do registro gerado pelo builder (FDD 21), nunca do código do plugin, e o runtime o confere contra `plugins[].module` do manifesto embutido (FDD 22); o contrato 2 confere ainda o pacote do tipo dinâmico
@@ -393,7 +407,7 @@ sequenceDiagram
 | 1 | `id == plugin.CoreID()` e `IsCoreOrigin(id, module)` falso | `privileged_origin` | `module` |
 | 2 | Origem do core e tipo dinâmico da instância (ou de `C`) declarado fora de `module` (pacote igual a `module` ou com prefixo `module + "/"`); tipo sem nome também é recusado | `privileged_origin` | `instance` ou `config` |
 | 3 | Plugin que não é o core com qualquer privilégio de `PrivilegesOf` | `privileged_capability` | `privileged.<privilégio>`, um por privilégio |
-| 4 | Core sem privilégio exigido, com `inst` não nulo: no sidecar, `conn_interceptors`; no controller, `public_grpc`, `authenticate` e `user_directory` (hipótese) | `core_capability_missing` | `privileged.<privilégio>` |
+| 4 | Core sem privilégio exigido, com `inst` não nulo: no sidecar, `conn_interceptors`; no controller, `public_grpc`, `authenticate` e `user_directory` (confirmado) | `core_capability_missing` | `privileged.<privilégio>` |
 | 5 | Sidecar: core (metade só de fundo) com qualquer hook de `proxy.HooksOf` | `background_only_hooks` | `hooks` |
 
   - **Erro:** embrulho com `Unwrap() []error` que carrega `ErrPrivileged` e `plugin.FieldErrors`, como nas FDDs 01, 02 e 08. O chamador prefixa com `plugin.PrefixErrors(err, plugin.PathKey("plugins", id.String()))` e loga um `privileged_refused` por problema
@@ -482,14 +496,14 @@ func (c *Core) ConnInterceptors() (grpc.UnaryClientInterceptor, grpc.StreamClien
   ```
 - Método: n/a
 - Semântica (L-10):
-  - **Quantas:** uma instância por processo (`.so`), mesmo que o Envoy crie a config do filtro mais de uma vez (singleton do runtime, FDDs 17 e 38) (hipótese)
+  - **Quantas:** uma instância por processo (`.so`), mesmo que o Envoy crie a config do filtro mais de uma vez (singleton do runtime, FDDs 17 e 38) (confirmado)
   - **Quem cria:** o executor (FDD 17), sempre, antes das instâncias de `plugins[]`; o core é implícito e não se declara no `n3x.yaml` (FDD 15, `core_implicit`)
-  - **Nome:** `CoreInstance` (`core`, igual a `id.Name()`, hipótese H-26 da FDD 07); é o que `env.Instance()` devolve e o rótulo `instance` das métricas e dos logs do core. Não fica reservado em `plugins[].instance`, porque logs e métricas sempre levam `plugin_id` (hipótese)
+  - **Nome:** `CoreInstance` (`core`, igual a `id.Name()`, confirmado, H-26 da FDD 07); é o que `env.Instance()` devolve e o rótulo `instance` das métricas e dos logs do core. Não fica reservado em `plugins[].instance`, porque logs e métricas sempre levam `plugin_id` (confirmado)
   - **Config:** o runtime chama `Instantiate([]byte("{}"), coreEnv, opener)`. O tipo de config da metade de proxy do core é vazio na v1 (pedido à FDD 36); todos os parâmetros vêm da visão `Sidecar()`, sem duplicar o schema da seção `controller`, que é da FDD 15
   - **Limites:** valem os de `runtime.plugin_limits["n3x.core"]` (FDD 15), com 5 tarefas no padrão de 8 (FDD 06)
   - **Standalone:** a instância é criada e fica inativa (HLD do `n3x-sidecar`: "o plugin core fica inativo"); ver contratos 5 e 7
   - **Sem hook:** a instância nunca entra na cadeia e nenhum hook pode ser declarado (`background_only_hooks`, ADR-008 do core)
-  - **Metade só de fundo exclusiva do core na v1** (hipótese): não há lugar no `n3x.yaml` para ligar nem configurar um plugin de terceiro sem fase (FDD 15 recusa `background_only` em `plugins[]`), e uma tarefa sempre ligada em todo sidecar, sem decisão do operador, é risco. O build recusa (pedido à FDD 20) e o runtime também (contrato 2, `privileged.background_only`). Abrir para terceiros é adição numa minor
+  - **Metade só de fundo exclusiva do core na v1** (confirmado): não há lugar no `n3x.yaml` para ligar nem configurar um plugin de terceiro sem fase (FDD 15 recusa `background_only` em `plugins[]`), e uma tarefa sempre ligada em todo sidecar, sem decisão do operador, é risco. O build recusa (pedido à FDD 20) e o runtime também (contrato 2, `privileged.background_only`). Abrir para terceiros é adição numa minor
   - **Forma (L-01):** um único ponto de entrada, `Sidecar()`, com métodos pequenos de dados (bytes, structs e um canal) e um único método bloqueante (`NextEvent`). `CoreEnv` e `Sidecar` são implementados só pela plataforma e crescem por minor (ADR-021); o core é o único consumidor e é compilado com a mesma versão do SDK que o runtime (FDD 20, L-57)
 
 **Exemplo de requisição**
@@ -640,14 +654,14 @@ m := sc.Manifest()
 - Método: n/a
 - Semântica:
   - **Entrada crua, não a config efetiva pronta:** o runtime entrega os dados e a FDD 37 monta o JSON canônico, mascara e calcula o hash (fora do escopo, ASSUNTO). Assim o formato da config efetiva evolui no core sem mudar o `.so`
-  - **`Config`:** saída de `Schema.Normalize(config)` sem opener (FDD 02): padrões aplicados, ordem canônica e o texto dos segredos como recebido. O runtime troca por `""` o texto de todo segredo em claro antes de entregar: o core nunca vê o valor em claro de segredo de outro plugin (hipótese, menor privilégio). Envelope `ENC[...]` não é segredo e fica intacto, para quem preferir usar o texto no `MaskSecrets`
+  - **`Config`:** saída de `Schema.Normalize(config)` sem opener (FDD 02): padrões aplicados, ordem canônica e o texto dos segredos como recebido. O runtime troca por `""` o texto de todo segredo em claro antes de entregar: o core nunca vê o valor em claro de segredo de outro plugin (confirmado, menor privilégio). Envelope `ENC[...]` não é segredo e fica intacto, para quem preferir usar o texto no `MaskSecrets`
   - **`Secrets` (L-07):** uma marca por campo segredo presente (`plugin.Secret`, `[]Secret`, `map[string]Secret`, `*Secret` não nulo), achada por `Schema.Walk`. `Sealed` corresponde a "veio em `ENC[...]` e abriu", o que é exato depois de uma subida sem erro (FDD 03). `Fingerprint` é sempre `plugin.SecretFingerprint` do texto recebido, a implementação única do ADR-006 do core (pedido da FDD 03)
   - **Segredo vazio:** `SecretEmpty`, nunca `SecretInClear`, e não gera `secret_in_clear` (FDD 03)
   - **`controller.secret`:** não entra em `Sidecar`; o core usa `ControllerSettings().Secret` (`Fingerprint()` e `InClear()`) para montar o campo, se a FDD 37 o incluir (L-06)
   - **`Sidecar`:** o documento inteiro do topo efetivo, para a FDD 37 escolher os campos do objeto `sidecar` (L-06) sem mudar esta interface quando o `n3x.yaml` ganhar campos. Caminhos de arquivo (`keys.aes_file`, `controller.ca_file`) não são segredo
   - **Cópia nova a cada chamada:** o core pode alterar o que recebe sem afetar o runtime; os dados são calculados uma vez na subida (config estática)
   - **Tamanho:** cada `Config` até `plugin.MaxConfigSize` (1 MiB, FDD 02); o limite do `Register` (1 MiB) é do core (FDD 37)
-  - **`NewPluginConfig` (ajuste pós-FDD 17, pedido P-14 da FDD 07; hipótese H-27):** a única implementação da montagem de `Config` e `Secrets`, para o executor e o kit não escreverem a mesma regra duas vezes. Regras:
+  - **`NewPluginConfig` (ajuste pós-FDD 17, pedido P-14 da FDD 07; H-27 confirmado):** a única implementação da montagem de `Config` e `Secrets`, para o executor e o kit não escreverem a mesma regra duas vezes. Regras:
     - `raw` vazio vale `{}`; `meta.Schema` nulo devolve erro com `plugin.ErrInvalidSchema`
     - `Config` = `meta.Schema.Normalize(raw)` sem opener (FDD 02): padrões aplicados, ordem canônica, `ENC[...]` intacto; depois, o texto de todo segredo não vazio que não começa com `ENC[` é trocado por `""`
     - `Secrets` = uma `SecretMark` por campo segredo presente, na ordem do `Schema.Walk`, com caminho relativo à config pela notação da L-34: `sealed` para texto que começa com `ENC[` (com `Fingerprint` = `plugin.SecretFingerprint` do texto exato), `in_clear` para outro texto não vazio e `empty` para texto vazio
@@ -743,9 +757,9 @@ plugins:
   //   Sidecar.NextEvent(ctx) (Event, error)
 
   const (
-      MaxPendingEvents   = 1024            // capacidade da fila (hipótese)
+      MaxPendingEvents   = 1024            // capacidade da fila (confirmado)
       MaxEventDetail     = 256             // bytes
-      PanicEventInterval = 1 * time.Second // no máximo 1 panic aceito por instância por intervalo (hipótese)
+      PanicEventInterval = 1 * time.Second // no máximo 1 panic aceito por instância por intervalo (confirmado)
   )
 
   // API do runtime (sidecar e kit). Plugins não chamam.
@@ -769,9 +783,9 @@ plugins:
   - **`Push` nunca bloqueia nem faz I/O:** trava curta, cópia do evento, sem alocação além do saneamento do `Detail`. Atribui `Seq` e corta o `Detail`
   - **Fila cheia:** sai o evento mais antigo e soma em `Dropped` do tipo dele; o novo entra. Mesma política do buffer da conexão (FR-002). Com o core consumindo, a fila só enche se a tarefa dele travar
   - **Amostragem de `panic`:** por par (plugin, instância), no máximo 1 aceito por `PanicEventInterval`; os demais somam no contador do par e em `Suppressed` do tipo; o próximo `panic` aceito do par leva o contador em `Suppressed` e o zera. As contagens exatas ficam em `n3x_plugin_panics_total` (FDD 18). Os outros tipos não são amostrados
-  - **`Detail`:** caracteres de controle viram espaço; corte em 256 bytes sem quebrar UTF-8; nunca o valor do panic, header, corpo, query, token ou valor de config (hipótese; a FDD 18 fixa o texto do panic)
+  - **`Detail`:** caracteres de controle viram espaço; corte em 256 bytes sem quebrar UTF-8; nunca o valor do panic, header, corpo, query, token ou valor de config (confirmado; a FDD 18 fixa o texto do panic)
   - **`Next`:** devolve na ordem de `Seq`; com `ctx` terminado, `ctx.Err()`. `NextEvent` no modo standalone devolve `ErrStandalone` na hora (o runtime não mantém a fila)
-  - **No desligamento:** os eventos não lidos são perdidos; o runtime loga `core_events_lost` com a contagem por tipo (hipótese)
+  - **No desligamento:** os eventos não lidos são perdidos; o runtime loga `core_events_lost` com a contagem por tipo (confirmado)
   - **Por que no SDK:** a fila do sidecar e a do kit precisam descartar, amostrar e numerar igual (mesmo padrão do `Registrar` e do `StateCell` da FDD 08)
 - Produtores e conteúdo:
 
@@ -780,7 +794,7 @@ plugins:
 | `panic` | contenção de falhas (FDD 18) | o plugin e a instância | `hook=<request_headers, request_body, response_headers, complete ou async>` ou `task=<nome>` |
 | `breaker_open` | contenção de falhas (FDD 18) | o plugin e a instância | `reason=panics` ou `reason=zombies` |
 | `plugin_disabled` | contenção de falhas (FDD 18, L-70) | o plugin e a instância | definido na FDD 18 |
-| `config_error` | carga da config no `.so` (FDD 17), na subida | o plugin e a instância, ou zero | `<caminho> [<código>]` de cada aviso não fatal do `core/config`, menos `secret_in_clear` (hipótese) |
+| `config_error` | carga da config no `.so` (FDD 17), na subida | o plugin e a instância, ou zero | `<caminho> [<código>]` de cada aviso não fatal do `core/config`, menos `secret_in_clear` (confirmado) |
 | `secret_in_clear` | carga da config no `.so` (FDD 17), na subida | o plugin e a instância, ou zero para `controller.secret` | caminho absoluto: `plugins[1].config.tokens[0]` ou `controller.secret` |
 | `drain_start` | supervisor da drenagem no `.so` (FDD 29) | zero e `""` | `drain_timeout=<duração>` |
 
@@ -816,7 +830,7 @@ e2, _ := q.Next(ctx)
   //   Sidecar.Draining() <-chan struct{}
   //   Sidecar.ExitContext() (context.Context, context.CancelFunc)
 
-  const ExitTimeout = 1500 * time.Millisecond // dentro do ShutdownGrace de 2 s (hipótese)
+  const ExitTimeout = 1500 * time.Millisecond // dentro do ShutdownGrace de 2 s (confirmado)
   ```
 - Método: n/a
 - Semântica:
@@ -885,7 +899,7 @@ func (c *Core) exitLoop(ctx context.Context) {
 - Semântica:
   - A família `n3x_controller_*` do sidecar é exceção da plataforma (L-12, FDD 06): o core nunca registra esses nomes pelo `env.Metrics()`; ele informa os fatos e a telemetria do `.so` publica (FDD 16)
   - `n3x_controller_session_age_seconds` = `agora - issuedAt` enquanto há sessão ativa, `0` sem sessão; calculado na publicação de 1 s
-  - `n3x_controller_logins_total{result}` com `result` em `ok`, `fail` e `error` (hipótese de valores; o alerta do HLD do core usa `fail`); a classificação de cada código é da FDD 39
+  - `n3x_controller_logins_total{result}` com `result` em `ok`, `fail` e `error` (confirmado; o alerta do HLD do core usa `fail`); a classificação de cada código é da FDD 39
   - 0 alocações, seguro entre goroutines; valor inválido de `LoginResult` não tem efeito
   - Standalone: o core não chama; as séries ficam em zero
 
@@ -927,7 +941,7 @@ n3x_controller_session_age_seconds 1520
   ```
 - Método: gRPC unário, sem `authorization`, na `17443`
 - Semântica:
-  - Chamado só para o core, uma vez, depois de `GRPC` e antes de `PluginAPI` (hipótese de posição); o host nunca chama `PublicGRPC` de outro plugin, que já foi recusado (contrato 2)
+  - Chamado só para o core, uma vez, depois de `GRPC` e antes de `PluginAPI` (confirmado); o host nunca chama `PublicGRPC` de outro plugin, que já foi recusado (contrato 2)
   - Regras do `Registrar` para a tabela pública, acumuladas e devolvidas no `Close` com as da FDD 08:
 
 | # | Condição | `Rule` | `Path` |
@@ -938,7 +952,7 @@ n3x_controller_session_age_seconds 1520
 | 4 | Mesmo `ServiceName` também na tabela `sidecar` ou `plugin` | `public_overlap` | `public_grpc["<serviço>"]` |
 | 5 | Segundo serviço na tabela | `too_many` | `public_grpc["<serviço>"]` |
 
-  - **L-11 (FDD 36):** o registrador trabalha com serviços inteiros e o grpc-go encerra o processo com o mesmo serviço registrado duas vezes (FDD 08). Por isso a rota pública precisa ser um serviço próprio, com um único método. Recomendação à FDD 36: serviço `n3x.plugins.n3x.core.v1.Login` com o método `Login`, cujo nome completo de serviço é exatamente o que o PRD, o ADR-004 e o ADR-019 citam (hipótese). Se a FDD 36 mantiver `Login` dentro de `Core`, a regra 4 vira "subconjunto do mesmo serviço com o mesmo `impl`", ajuste do SDK antes da `v0.1.0`
+  - **L-11 (FDD 36), decisão confirmada:** o registrador trabalha com serviços inteiros e o grpc-go encerra o processo com o mesmo serviço registrado duas vezes (FDD 08). Por isso a rota pública é um serviço próprio, com um único método: `n3x.plugins.n3x.core.v1.Login` com o método unário `Login`, cujo nome completo de serviço é exatamente o que o PRD, o ADR-004 e o ADR-019 citam. `Register`, `Heartbeat` e `Exit` ficam no serviço `Core`. Isso exige mudar o ADR-007 do `n3x-plugin-core` e a FDD 36 (outro repositório)
   - O host (FDD 33) monta o serviço na `17443`, sem `Authenticate` e sem papel; o `Caller` fica zero (FDD 08) e o IP vem de `CallerIP` (contrato 14); vale o limite de tentativas do verificador (FDD 31)
 
 **Exemplo de requisição**
@@ -975,9 +989,9 @@ func (a *Auth) PublicGRPC2(r ctrl.GRPCRegistrar) { corev1.RegisterCoreServer(r, 
 - Método: chamada local pelo interceptor de autenticação do servidor `17443` (FDD 33), em toda chamada fora da tabela pública
 - Semântica:
   - `token` é o primeiro valor do metadado `authorization`, como chegou; o formato e o esquema são do core (FDD 39), porque quem anexa (contrato 3) e quem confere são o mesmo plugin. Metadado ausente ou vazio: o host responde `UNAUTHENTICATED` sem chamar
-  - **Sucesso:** `Identity{Role: RoleSidecar, Service, Instance, Session}` com `Valid()` verdadeiro e `Session` igual ao nonce do token (identificador não secreto, pedido da FDD 08 e I-10 dela). Qualquer outra identidade: `UNAUTHENTICATED` e log `privileged_misbehavior` (hipótese)
+  - **Sucesso:** `Identity{Role: RoleSidecar, Service, Instance, Session}` com `Valid()` verdadeiro e `Session` igual ao nonce do token (identificador não secreto, pedido da FDD 08 e I-10 dela). Qualquer outra identidade: `UNAUTHENTICATED` e log `privileged_misbehavior` (confirmado)
   - **Erro:** qualquer erro vira `UNAUTHENTICATED` com a mensagem genérica de `ErrUnauthenticated`; o texto devolvido pelo core vai só para o log, sem o token
-  - **Custo (HLD do core):** sem I/O; 0 alocações e p99 até 20 µs com token válido (hipótese de tempo; critério na FDD 39, medido pelo kit). Seguro entre goroutines, sem trava global
+  - **Custo (HLD do core):** sem I/O; 0 alocações e p99 até 20 µs com token válido (confirmado; critério na FDD 39, medido pelo kit). Seguro entre goroutines, sem trava global
   - O host confere o papel depois (`sidecar`, ADR-007), retira `authorization` dos metadados de entrada e injeta a identidade com `ContextWithCaller`; nenhum handler, nem os do core, vê o token
   - Core `failed`: o host responde `UNAVAILABLE` sem chamar. Panic: `INTERNAL` e `kind="auth"`
 
@@ -1017,7 +1031,7 @@ x-request-id: 8b0f3c2e-4f1a-4c55-9a77-2d6e1b9f0c31
   ```
 - Método: chamada local pelo login do painel (FDD 34)
 - Semântica:
-  - **Senha como `plugin.Secret`** (hipótese): o host monta com `plugin.NewSecret(valorDoFormulario)`; o valor só sai por `Reveal()` e nunca aparece em log, erro ou `fmt` (FDD 03)
+  - **Senha como `plugin.Secret`** (confirmado): o host monta com `plugin.NewSecret(valorDoFormulario)`; o valor só sai por `Reveal()` e nunca aparece em log, erro ou `fmt` (FDD 03)
   - O host só chama para usuário diferente do root, depois de conferir o bloqueio por usuário e IP e o estado do core (contrato 16)
   - **Sucesso:** exatamente `Identity{Role: RoleRead, User: user}`; qualquer outra identidade é falha, com log `privileged_misbehavior`. O core nunca devolve `RoleRoot`
   - **Falha:** `ErrInvalidCredentials` para usuário inexistente, senha errada ou `disabled`, sem distinguir (FR-009); com tempo parecido nos três casos (pedido à FDD 40: bcrypt de referência para usuário inexistente)
@@ -1065,7 +1079,7 @@ err2 := dir.ChangePassword(ctx, "ana", plugin.NewSecret("a"), plugin.NewSecret("
   ```
 - Método: n/a na v1
 - Semântica:
-  - **Entra no contrato da `v1.0.0`, sem uso** (hipótese): o ADR-019 atualizado diz que as interfaces seguem no contrato, e o FR-013 exige que o SDK e o controller recusem gravador de auditoria em plugin que não é o core; sem o tipo, não haveria o que recusar
+  - **Entra no contrato da `v1.0.0`, sem uso** (confirmado; `WriteAudit` reservado à v2): o ADR-019 atualizado diz que as interfaces seguem no contrato, e o FR-013 exige que o SDK e o controller recusem gravador de auditoria em plugin que não é o core; sem o tipo, não haveria o que recusar
   - O host da v1 nunca chama `WriteAudit`. Se o core implementar, o host aceita (origem conferida) e loga `capability_unused` uma vez; plugin que não é o core é recusado (contrato 2)
   - A semântica de uso (gravação síncrona, recusa da ação quando falha) volta com a auditoria da v2 e muda o host, não este contrato
 
@@ -1116,7 +1130,7 @@ privs := ctrl.PrivilegesOf(p, &CoreV2{}) // um core futuro que implementa WriteA
   - **`Sessions().Revoke`:** corta as sessões do painel do usuário (ADR-006 do `n3x-controller`); sem uso na v1 (ADR-003 do core); implementado pela FDD 34 mesmo assim, para o contrato ter um único comportamento
   - **`ControllerManifest()` (L-02):** bytes do manifesto embutido no binário do controller, lidos pelo host na subida (FDD 30, formato da FDD 22), em cópia nova a cada chamada; o core compara as listas de plugins com o manifesto do sidecar (FDD 43) e pode rotular campos pelos schemas (FDD 44)
   - **`CallerIP(ctx)` (L-02):** devolve o IP que o host resolveu para a chamada gRPC em curso; `false` fora de handler gRPC (página, cartão, `Start`, tarefa). Só o core recebe o IP pelo contrato; o painel não entrega IP a plugin (FDD 08)
-  - **Regra de resolução do IP** (hipótese; implementação na FDD 33):
+  - **Regra de resolução do IP** (confirmado; implementação na FDD 33):
     1. endereço do par TCP da conexão (`peer`), com IPv4 mapeado em IPv6 convertido para IPv4
     2. se o par está em `grpc.trusted_proxies` (lista de prefixos CIDR no `n3x.yaml` do controller, vazia por padrão, FDD 30), o host lê o metadado `x-forwarded-for` (todos os valores, separados por vírgula) da direita para a esquerda e usa o primeiro endereço válido que não está na lista
     3. sem lista, com par fora dela ou sem endereço válido no metadado, vale o par; `x-forwarded-for` nunca é lido de par não confiável, para ninguém escolher o próprio IP
@@ -1216,8 +1230,8 @@ plugins["n3x.core"].users[1].name: usuário de leitura não pode ter o nome do r
 - Assinatura/Rota: `StateCell` do plugin cujo ID é `plugin.CoreID()`; `cell.Load()` com 0 alocações (FDD 08, contrato 10)
 - Método: n/a
 - Semântica:
-  - **Fonte única:** o estado do core declarado pelo próprio core (`env.State().Degraded`, ADR-009 do core) ou atribuído pelo host (`Fail`, L-36 na FDD 32). Não há sinal próprio do diretório: "o diretório não responde" já é `failed` ou `degraded` do core
-  - **Painel:** no login, `State` diferente de `StateOK` faz o host aceitar só o root; o pedido de usuário de leitura recebe a mensagem genérica e o host loga `auth_core_unavailable` (no máximo 1 por minuto). Sessões já abertas seguem até expirar (hipótese; FDD 34 confirma)
+  - **Fonte única (confirmado):** só o próprio core declara `degraded` (`env.State().Degraded`, ADR-009 do core); o host atribui `failed` ao core por panic repetido em `Authenticate` ou `CheckUser` (`Fail`, L-36; limiar definido na FDD 32, outro repositório), com recuperação automática quando o core volta a `ok`. Não há sinal próprio do diretório: "o diretório não responde" já é `failed` ou `degraded` do core
+  - **Painel:** no login, `State` diferente de `StateOK` faz o host aceitar só o root; o pedido de usuário de leitura recebe a mensagem genérica e o host loga `auth_core_unavailable` (no máximo 1 por minuto). Sessões já abertas seguem até expirar (confirmado; FDD 34 implementa)
   - **gRPC:** com `StateFailed`, o host não chama `Authenticate` e responde `UNAVAILABLE` a tudo, inclusive à tabela pública (plugin `falho` não tem serviços, FDD 08); com `StateDegraded`, tudo segue (o core continua aceitando heartbeats, ADR-009)
   - O root nunca depende do core (ADR-003 do `n3x-controller`)
 
@@ -1275,8 +1289,8 @@ if st := coreCell.Load(); st.State != ctrl.StateOK {
 | `ErrUnsupported` | `UNIMPLEMENTED` | tela ausente na v1 | n/a |
 | Prazo estourado | `DEADLINE_EXCEEDED` | mensagem genérica | `auth_failed` com `reason=timeout` |
 | Panic em capacidade do core | `INTERNAL`, mensagem genérica | mensagem genérica | `plugin_panic` com `kind=auth` |
-| Core `failed` | `UNAVAILABLE` | só o root entra | `auth_core_unavailable` |
-| Core `degraded` | normal | só o root entra | `auth_core_unavailable` |
+| Core `failed` (atribuído pelo host por panic repetido; recuperação automática) | `UNAVAILABLE` | só o root entra | `auth_core_unavailable` |
+| Core `degraded` (declarado só pelo próprio core) | normal | só o root entra | `auth_core_unavailable` |
 | `ErrPrivileged` | n/a (subida) | n/a (subida) | `privileged_refused` |
 
 **Exemplo de requisição**
@@ -1310,7 +1324,7 @@ fmt.Println(errors.Is(err, ctrl.ErrInvalidCredentials), status.Code(err))
 | Campo novo em struct de dados ou em `HostFacts` | Minor |
 | Privilégio novo exigido do core (`core_capability_missing`) | Minor com nota, porque só o core oficial é afetado e ele sobe junto |
 | Mudar assinatura de capacidade, tirar método, mudar a regra de origem ou o mapeamento de erro | Major |
-| Mudar `MaxPendingEvents`, `PanicEventInterval` ou `ExitTimeout` | Minor com nota de versão (hipótese, igual às FDDs 06 e 08) |
+| Mudar `MaxPendingEvents`, `PanicEventInterval` ou `ExitTimeout` | Minor com nota de versão (confirmado, igual às FDDs 06 e 08) |
 
 **Exemplo de requisição**
 ```text
@@ -1392,14 +1406,14 @@ Core 1.3 usa ProcessInfo; o sidecar-builder com SDK 1.2 tenta compilar esse core
 
 | Métrica | Tipo | Rótulos | Fonte | Quem publica |
 | --- | --- | --- | --- | --- |
-| `n3x_sidecar_events_total` | counter | `kind` | `EventQueueStats.Accepted` (o que o core do sidecar já conta antes de entregar) | FDD 16 (nova, hipótese) |
-| `n3x_sidecar_events_suppressed_total` | counter | `kind` | `EventQueueStats.Suppressed` | FDD 16 (nova, hipótese) |
-| `n3x_sidecar_events_dropped_total` | counter | `kind` | `EventQueueStats.Dropped` | FDD 16 (nova, hipótese) |
-| `n3x_sidecar_events_pending` | gauge | | `EventQueueStats.Pending` | FDD 16 (nova, hipótese) |
+| `n3x_sidecar_events_total` | counter | `kind` | `EventQueueStats.Accepted` (o que o core do sidecar já conta antes de entregar) | FDD 16 (nova, confirmado) |
+| `n3x_sidecar_events_suppressed_total` | counter | `kind` | `EventQueueStats.Suppressed` | FDD 16 (nova, confirmado) |
+| `n3x_sidecar_events_dropped_total` | counter | `kind` | `EventQueueStats.Dropped` | FDD 16 (nova, confirmado) |
+| `n3x_sidecar_events_pending` | gauge | | `EventQueueStats.Pending` | FDD 16 (nova, confirmado) |
 | `n3x_controller_session_age_seconds` | gauge | | `SessionReporter` (L-12) | FDD 16 (HLD do `n3x-sidecar`) |
 | `n3x_controller_logins_total` | counter | `result` (`ok`, `fail`, `error`) | `SessionReporter` (L-12) | FDD 16 (HLD do `n3x-sidecar`) |
-| `n3x_controller_auth_total` | counter | `result` (`ok`, `unauthenticated`, `missing_token`, `invalid_identity`, `core_unavailable`, `panic`) | interceptor de autenticação | FDD 33 (nova, hipótese) |
-| `n3x_controller_plugin_panics_total` | counter | `plugin`, `kind` com o valor novo `auth` | recover nas capacidades do core | FDD 32 (valor novo, hipótese) |
+| `n3x_controller_auth_total` | counter | `result` (`ok`, `unauthenticated`, `missing_token`, `invalid_identity`, `core_unavailable`, `panic`) | interceptor de autenticação | FDD 33 (nova, confirmado) |
+| `n3x_controller_plugin_panics_total` | counter | `plugin`, `kind` com o valor novo `auth` | recover nas capacidades do core | FDD 32 (valor novo, confirmado) |
 | `n3x_n3x_core_events_total` | counter | `kind` | eventos recebidos no controller | FDD 43 (HLD do core) |
 
 - Famílias `n3x_sidecar_*` e `n3x_controller_*` são da plataforma (FDD 06, contrato 10); o core não registra nenhuma delas pelo `env.Metrics()`
@@ -1458,7 +1472,7 @@ Core 1.3 usa ProcessInfo; o sidecar-builder com SDK 1.2 tenta compilar esse core
 - Semver estrito do módulo desde a `v1.0.0`; antes disso, `v0.x` pode mudar este contrato (ADR-021)
 - Congelados na major: regra de origem (`IsCoreOrigin` e o par ID e módulo), assinaturas das seis capacidades, códigos de regra (`privileged_capability`, `privileged_origin`, `core_capability_missing`, `background_only_hooks`, `public_method`, `public_overlap`), mapeamento de erros do contrato 17, nomes e rótulos das métricas fixadas aqui
 - Por minor: métodos novos nas interfaces implementadas pela plataforma, campos novos em structs de dados, valores novos de enumeração (contrato 18)
-- `proxy/` e `controller/` continuam sem importar um ao outro; a regra de origem comum mora em `plugin/` e num pacote interno (`internal/privileged`, hipótese), com teste de igualdade entre as duas metades
+- `proxy/` e `controller/` continuam sem importar um ao outro; a regra de origem comum mora em `plugin/` e num pacote interno (`internal/privileged`, confirmado; deve constar no HLD e no ADR-011), com teste de igualdade entre as duas metades
 - Runtime real e kit usam a mesma `EventQueue`, o mesmo `CheckPrivileged` e o mesmo `Registrar`; recusas e descartes são idênticos por construção
 - Superfície pública de `proxy/`, `controller/` e `plugin/` congelada por golden de `go doc -all`
 
@@ -1474,7 +1488,7 @@ Core 1.3 usa ProcessInfo; o sidecar-builder com SDK 1.2 tenta compilar esse core
 - **Metade só de fundo de terceiro:** manifesto `acme.bg` com `phases: []` dá `privileged_capability` em `privileged.background_only` com `inst` nulo
 - **Handles:** `env.(proxy.CoreEnv)` e `env.(ctrl.CoreEnv)` falsos para `n3x.example` no kit e no runtime; verdadeiros para o core
 - **Token invisível:** com o kit e `bufconn`, uma chamada do `n3x.example` chega ao servidor com `authorization`; o handler do `n3x.example` no controller não vê `authorization`; o `ctx` do plugin no sidecar não tem `authorization` depois da chamada; o interceptor do core é o último antes do transporte (contagem de ordem no teste)
-- **Fila:** `MaxPendingEvents + 1` eventos sem consumidor deixam 1.024 pendentes e `Dropped` igual a 1 no tipo do mais antigo; 100.000 `Push` sem consumidor em menos de 50 ms no runner da CI (hipótese); 16 produtores e 1 consumidor por 1 s com `-race`, sem corrida, `Seq` estritamente crescente e soma de aceitos, descartados e pendentes igual à de `Push` aceitos
+- **Fila:** `MaxPendingEvents + 1` eventos sem consumidor deixam 1.024 pendentes e `Dropped` igual a 1 no tipo do mais antigo; 100.000 `Push` sem consumidor em menos de 50 ms no runner da CI (confirmado); 16 produtores e 1 consumidor por 1 s com `-race`, sem corrida, `Seq` estritamente crescente e soma de aceitos, descartados e pendentes igual à de `Push` aceitos
 - **Amostragem:** o exemplo do contrato 7 dá exatamente `e1` e `e2` (relógio falso); duas instâncias diferentes não se afetam; `breaker_open` e `secret_in_clear` nunca são suprimidos
 - **Entrega:** com o consumidor esperando, mediana de `Push` até `Next` de no máximo 10 ms em 1.000 eventos; `Next` com `ctx` cancelado volta em até 1 ms com `ctx.Err()`
 - **`Detail`:** 300 bytes viram 256 sem quebrar UTF-8; quebra de linha e caracteres de controle viram espaço
@@ -1492,7 +1506,7 @@ Core 1.3 usa ProcessInfo; o sidecar-builder com SDK 1.2 tenta compilar esse core
 - **Estado do core** (vetores para a FDD 34): `degraded` e `failed` recusam leitura e aceitam root; `failed` dá `UNAVAILABLE` sem chamar `Authenticate`
 - **Dependências:** `go list -deps ./plugin` só lista biblioteca padrão; `./proxy` não lista `controller/`; `./controller` não lista `proxy/`; `go vet` e `go test -race ./plugin/... ./proxy/... ./controller/...` passam
 - **Superfície:** golden de `go doc -all` de `plugin/`, `proxy/` e `controller/` igual ao versionado
-- **Cobertura:** no mínimo 90% de linhas no código novo desta FDD (hipótese, igual às FDDs anteriores)
+- **Cobertura:** no mínimo 90% de linhas no código novo desta FDD (confirmado, igual às FDDs anteriores)
 
 ---
 

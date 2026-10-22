@@ -26,8 +26,10 @@ Responsável: Guilherme Giusti
 **Suposições**
 - As imagens `ghcr.io/giustech/n3x/{sidecar-builder,sidecar,controller-builder,controller}` existem por tag imutável e digest, com a tabela de pares em `n3x-builder/compat/pairs.json` (FDD 46)
 - O plugin de exemplo `github.com/giustech/n3x-sdk/example` (FDD 13) é o único plugin além do core nos exemplos; o `n3x-plugin add` o resolve pelo proxy de módulos público
-- O operador tem Docker Engine 24 ou superior com BuildKit e Docker Compose v2.20 ou superior (hipótese de versão mínima, H-21)
-- O kind usa o domínio de cluster padrão `cluster.local` (hipótese usada pelo endereço do controller, H-05)
+- O operador tem Docker Engine 24 ou superior com BuildKit e Docker Compose v2.20 ou superior (versão mínima, confirmado)
+- O kind usa o domínio de cluster padrão `cluster.local` e o endereço do controller é fixo em todas as topologias, `n3x-controller.n3x.svc.cluster.local:17443` (confirmado)
+- Status das hipóteses H-NN citadas nesta FDD, todas **(confirmado)** na clarificação, exceto H-08 e as do Istio (item seguinte): H-01 nomes do layout; H-02 escolha do par; H-03 módulo aninhado `deploy/tools`; H-04 caminhos fixos; H-05 FQDN fixo do controller; H-07 chave AES no ECS por `n3x-files`; H-09 certificado do controller no Kubernetes; H-10 `controller.yaml` em `Secret`; H-11 `tmpfs` de 16 MiB; H-12 recursos iniciais; H-14 `params.yaml`; H-15 Grafana 10.4; H-16 guias em Markdown no repositório; H-17 cronometragem dos 30 minutos; H-18 condição dos 5 minutos; H-19 `NetworkPolicy`; H-20 `preStop` opcional; H-21 versões mínimas de ferramentas; H-23 estágio `out`; H-24 caminho do segredo em claro não é sensível; H-26 balanceador do ECS; H-27 controller no ECS. H-06, H-13, H-22 e H-25 não são citados aqui
+- **(hipótese), depende da FDD 49:** H-08 (local do `EnvoyFilter`) e as hipóteses do Istio (L-27: `userVolume`, `MERGE_SLASHES`, `proxyStatsMatcher`), que a FDD 49 decide
 
 **Restrições**
 - Chave AES sempre em arquivo montado, nunca em variável de ambiente; nenhum comportamento do N3X por variável de ambiente (FR-001)
@@ -43,6 +45,7 @@ Responsável: Guilherme Giusti
 - ADRs: ADR-006, ADR-007 e ADR-008 do `n3x-sdk`; ADR-002 e ADR-008 do `n3x-sidecar`; ADR-009 do `n3x-controller`; ADR-005 e ADR-009 do `n3x-builder`
 - Lacunas fechadas aqui: **L-28** (chave AES no ECS) e **L-42** (local do `EnvoyFilter`). Lacunas aplicadas: L-16 (admin em socket), L-17 (`n3x probe`), L-31 (dimensionamento até a FDD 50), L-24 (imagem do controller e `GOMEMLIMIT`). Lacuna documentada como reservada: **L-27** (hipóteses do Istio, decididas na FDD 49, que depende desta)
 - FDDs consumidas: 15, 25, 26, 27, 28, 29 e 30 (contratos de execução), 33, 34, 35, 38 e 39 (rede, TLS e sessão), 45 (contrato 13 e painéis), 46 (imagens, pares e `examples/`), 14 (ciclo do autor), 51 (dimensionamento)
+- Numeração: "FDD NN" sem prefixo é a numeração global do conjunto de FDDs (47 é esta, SDK-15; 48 é a SDK-16). "FDD 15" é a FDD de configuração do sidecar (outro repositório), e não esta; as FDDs do `n3x-sdk` aparecem com o prefixo SDK-NN quando for preciso distinguir
 
 **Tabela de rastreabilidade dos pedidos (pedido → destino)**
 
@@ -96,7 +99,7 @@ Todo pedido dirigido à FDD 47 no `REGISTRO-DE-DECISOES.md` e nas FDDs tem desti
 | R-44 | FDD 43 | sentido de `inventory_retention`; conflito de identidade; ordem de atualização (controller primeiro); alertas | `op/operacao.md`; A-05 em `op/alertas.md` |
 | R-45 | FDD 44 | cifrar uma vez; trecho com `ENC[...]`; sentido de "recente" e "persistente" | `op/segredos.md`, `op/operacao.md`; A-15 |
 | R-46 | FDD 45 | contrato 13 como `PrometheusRule`; 6 painéis de referência; guia de cada alerta A-xx; `honor_labels` e rótulo `pod` | C12, C13, C11; `op/alertas.md` |
-| R-47 | FDD 45 | avaliar se o caminho do segredo em claro é sensível (risco da FDD 45) | decidido: o caminho não é sensível (H-24); `op/segredos.md` |
+| R-47 | FDD 45 | avaliar se o caminho do segredo em claro é sensível (risco da FDD 45) | decidido: o caminho não é sensível (confirmado); `op/segredos.md` |
 | R-48 | FDD 45 | ajustar limiares com os números da FDD 51 | C14 (`sizing.json`) e C12 (`params.yaml`) |
 | R-49 | FDD 46 | tabela de pares; Dockerfiles de `examples/`; espelho por digest (`imagetools create`); política `candidate` e `-rc`; limites do GHCR | C2, C5; `op/imagens-e-build.md` |
 | R-50 | FDD 51 | tabela de dimensionamento (serviços sem chave por vCPU, `hmac_key`, 1 GB); Prometheus local com `--hold`; pedir `effective_config_bytes` e tamanho do manifesto | C14; `op/dimensionamento.md`, `op/observabilidade.md` |
@@ -111,13 +114,28 @@ Todo pedido dirigido à FDD 47 no `REGISTRO-DE-DECISOES.md` e nas FDDs tem desti
 | R-59 | ASSUNTO | cronometragem dos 30 minutos | C17 |
 | R-60 | ASSUNTO | formato dos guias | C15 e C16 (Markdown no repositório) |
 
+**Decisões aprovadas na clarificação**
+- Chave no host (compose e kind): o `bootstrap.sh` não grava mais a chave no host com `chown`; um serviço inicial `n3x-files` (root, `restart: "no"`, com os serviços N3X em `depends_on` `condition: service_completed_successfully`) escreve a chave AES e o `tls.key` num volume nomeado com dono 17000:17000 e modo 0440, montado só leitura, igual em Linux, macOS e Windows e no mesmo padrão do ECS (`n3x-files`) e do Kubernetes (init); o operador lê a chave com `docker run --rm -v <volume>:/k busybox cat /k/...` ou `docker cp`, os segredos `ENC[...]` são gerados por contêiner auxiliar com a imagem N3X e só os arquivos sem segredo em claro (`n3x.yaml` com `ENC`, certificados públicos) vão ao host; a alternativa para quem prefere a chave numa pasta do host é um contêiner auxiliar `docker run --rm --user 0` com `chown 17000:17000` e `chmod 0440` em `.n3x/` (no Docker Desktop a permissão do bind é emulada e pode não ter efeito)
+- ECS: o papel da task é visível a todos os contêineres e a aplicação pode ler a chave AES no Secrets Manager (no Kubernetes e no compose o arquivo nem é montado nela); é **risco residual aceito**, com IAM de menor privilégio (só os ARNs necessários), `essential: false` no `n3x-files` e aviso explícito em `op/seguranca.md`; endurecimento opcional descrito no guia: EFS com ponto de acesso (UID 17000) com a chave, sem permissão da task no Secrets Manager
+- Istio: **bloqueia o release da v1.0.0**; o texto "não pronto para uso" de `deploy/istio/` e de `istio.md` é interino; a v1.0.0 só sai com o conteúdo da FDD 49 e com o kind com Istio da FDD 48; se o alvo `istio-1.31` for adiado, é decisão registrada no PRD (contingência do PRD); as hipóteses específicas do Istio continuam "(hipótese)" da FDD 49
+- FQDN do controller fixo, `n3x-controller.n3x.svc.cluster.local:17443`, em todas as topologias, com o mesmo `n3x.yaml` byte a byte (SHA-256 igual); no ECS exige um namespace privado do Cloud Map com esse nome, e o guia ensina a trocar o modelo e o `--controller-name` (H-05 e a contingência P-01 confirmados)
+- Correções técnicas aplicadas: combinação de CPU e memória do Fargate (`cpu` 1024 e `memory` 2048), `runAsUser` só no contêiner `n3x` (a aplicação mantém o UID dela), corpo JSON da negação HTTP (`{"code":403,"message":"bloqueado"}`, decisão da FDD 05) e tier do Parameter Store (`Advanced`, 8 KiB)
+- Os pacotes e módulos `deploy/tools` (módulo aninhado) e a ferramenta `deploytool` devem constar no HLD e no ADR-011; o HLD (mapa de portas) e o ADR-006 ainda citam o admin do Envoy em `127.0.0.1:17001`, mas esta FDD usa o socket `/tmp/n3x/admin.sock` (FDD 26, outro repositório): atualizar no Workflow 3
+- As demais hipóteses numéricas, de teste, de versões de ferramentas e de baixo risco ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Divergências para o Workflow 3: HLD e ADR-006 (admin do Envoy em socket e não em `127.0.0.1:17001`); HLD (ECS: chave por `n3x-files` e health por `n3x probe live`, e não HTTP na `17021`); ADR-008 (um exemplo por topologia; o Istio depende da FDD 49); PRD (a condição "imagens base já baixadas" da medida dos 5 minutos, H-18, estreita o critério "até 5 minutos" do PRD; o PRD não é alterado aqui); ADR-007 (`preStop` opcional, H-20, para aplicação que não pode chamar `/drain`)
+- Dependem de outros repositórios: FDD 46 (estágio `out` nos Dockerfiles, `compat/pairs.json`); 45 (formato do `runbook` com a tag, `n3x-core.rules.yaml`); 48 (compose no PR, kind, ECS manual, kind com Istio); 49 (conteúdo do Istio); 50 e 51 (dimensionamento); 25 a 30 (comandos `n3x probe live` e `ready`, `keygen`, `credential new`, `hash`, `dev-cert`, `validate`, `encrypt --plugin`; o `dev-cert`, o `keygen` e o `encrypt` precisam ler e escrever a chave num caminho do volume montado); 33 a 35 e 38; o `GOMEMLIMIT` de 45% e 80% é calculado pelo host
+- A cobertura do roteiro dos 30 minutos no Windows sem WSL2 (o `bootstrap.sh` é POSIX `sh`) fica como pendência do guia
+- Documentar: `NetworkPolicy` com saída livre (endurecimento opcional e como o controller é alcançado de outro namespace); `17000:17000` publicado em todas as interfaces e painel só em `127.0.0.1` (exemplo de desenvolvimento e CI); ADOT no ECS como trecho do guia; conteúdo da política IAM do controller no ECS
+
 ---
 
 ### 2. Objetivos técnicos
 
-- **Serviço novo em até 30 minutos só com o guia.** Medida: no roteiro `op/roteiros/servico-novo-30min.md`, a partir de uma máquina com Docker e sem imagens N3X baixadas, o operador chega ao sidecar `pedidos` em estado `connected` na tela `/plugins/n3x/core/sidecars` em no máximo 1.800 s, sem editar o código da aplicação (critério do PRD; cronometragem no contrato 17).
-- **Compose do zero em até 5 minutos.** Medida: `docker compose build`, `bootstrap.sh` e `docker compose up -d --wait` somam no máximo 300 s num runner `ubuntu-24.04` de 4 vCPUs com o cache de build vazio e as imagens base já baixadas (hipótese de condição, H-18); medido pela FDD 48 a cada PR.
-- **Mesma imagem e mesmo `n3x.yaml` nas três topologias.** Invariante: o `n3x.yaml` do sidecar montado no compose, no kind e no ECS é o mesmo arquivo, byte a byte (SHA-256 igual), gerado uma vez pelo `bootstrap.sh`; as diferenças entre orquestradores ficam só nos manifestos (H-04, H-05).
+- **Serviço novo em até 30 minutos só com o guia.** Medida: no roteiro `op/roteiros/servico-novo-30min.md`, a partir de uma máquina Linux ou macOS com Docker (Windows só via WSL2, porque o `bootstrap.sh` é `sh`) e sem imagens N3X baixadas, o operador chega ao sidecar `pedidos` em estado `connected` na tela `/plugins/n3x/core/sidecars` em no máximo 1.800 s, sem editar o código da aplicação (critério do PRD; cronometragem no contrato 17).
+- **Compose do zero em até 5 minutos.** Medida: `docker compose build`, `bootstrap.sh` e `docker compose up -d --wait` somam no máximo 300 s num runner `ubuntu-24.04` de 4 vCPUs com o cache de build vazio e as imagens base já baixadas (condição confirmada; ela estreita o critério "até 5 minutos" do PRD e é divergência registrada para o Workflow 3); medido pela FDD 48 a cada PR.
+- **Mesma imagem e mesmo `n3x.yaml` nas três topologias.** Invariante: o `n3x.yaml` do sidecar montado no compose, no kind e no ECS é o mesmo arquivo, byte a byte (SHA-256 igual), gerado uma vez pelo `bootstrap.sh`, com o endereço fixo do controller; as diferenças entre orquestradores ficam só nos manifestos (confirmado).
 - **Todo artefato validado sem subir nada.** Medida: em todo PR que toca `deploy/` ou `docs/`, o workflow `deploy.yml` roda `kubeconform` (Kubernetes 1.29.0 e a mais nova de `versions.json`), `docker compose config`, as 58 regras de política do `deploytool check`, `promtool check rules` e `promtool test rules`, a checagem das consultas dos painéis, o lint de Markdown sem travessões e de links internos, e `n3x validate` e `n3x-controller validate` completos sobre a saída do `bootstrap.sh`; 0 erros para o merge.
 - **Exemplos nunca atrás das imagens publicadas.** Medida: até 2 dias úteis entre um par novo `ok` nas duas arquiteturas em `compat/pairs.json` e o PR de atualização de `deploy/versions.json` (bot); `deploytool render --check` e a checagem de fonte (`src_drift`) zeram a deriva entre cópias e originais.
 - **Todo alerta com guia.** Invariante: cada alerta de `deploy/observability/` (A-01 a A-43, AS-01 a AS-35, AC-01 a AC-34) tem anotação `runbook` apontando para um título `### <ID>` existente em `op/alertas.md`, e cada título tem o alerta (regra `obs_runbook`).
@@ -150,8 +168,8 @@ Todo pedido dirigido à FDD 47 no `REGISTRO-DE-DECISOES.md` e nas FDDs tem desti
 - Imagens de runtime e de build, tabela de pares e o render dos `examples/`: FDDs 28, 30 e 46
 - Ferramentas `n3x-new` e `schema-check`: FDD 14
 - Injeção automática do sidecar e interceptação por iptables: fora da v1 (PRD)
-- Helm chart, operador Kubernetes, módulo Terraform e CloudFormation: fora da v1 (hipótese; os exemplos são kustomize, compose e JSON de task definition)
-- Site de documentação gerado: fora da v1 (H-16)
+- Helm chart, operador Kubernetes, módulo Terraform e CloudFormation: fora da v1 (confirmado; os exemplos são kustomize, compose e JSON de task definition)
+- Site de documentação gerado: fora da v1 (confirmado)
 
 ---
 
@@ -160,21 +178,21 @@ Todo pedido dirigido à FDD 47 no `REGISTRO-DE-DECISOES.md` e nas FDDs tem desti
 **Fluxo principal: serviço novo em docker compose (o roteiro dos 30 minutos)**
 1. O operador clona o `n3x-sdk` na tag do release e abre `docs/operador/inicio-rapido.md`
 2. `cd deploy/compose && docker compose build`: constrói o sidecar (`deploy/images/sidecar/Dockerfile`, core e `n3x.example`), o controller (`deploy/images/controller/Dockerfile`) e a aplicação `eco`; as imagens base vêm por tag e digest de `versions.json`
-3. `../config/bootstrap.sh --out .n3x`: com as imagens recém-construídas, gera em `.n3x/` as chaves AES do sidecar e do controller (`keygen`), a credencial do serviço `pedidos` (`credential new pedidos --key`, com o segredo já cifrado para o sidecar), os hashes do root e do usuário de leitura (`hash --cost 12`), a `hmac_key` cifrada (`keygen` mais `encrypt --plugin n3x.core`), o certificado de desenvolvimento (`dev-cert` com o nome do controller) e os dois `n3x.yaml` preenchidos a partir dos modelos de `deploy/config/`
-4. `docker compose up -d --wait`: sobe o controller (healthcheck `probe ready`), o sidecar (healthcheck `probe live`) e a aplicação, que entra no namespace de rede do sidecar e escuta em `127.0.0.1:3000`
-5. `curl -si localhost:17000/eco` responde 200 com `x-n3x: 1` no eco; `curl -si localhost:17000/admin` responde 403 `bloqueado`
-6. O operador abre `https://localhost:17444`, entra como `admin` com a senha de `.n3x/root-password.txt` e vê o sidecar `pedidos` em `connected` com o hash da config; o cronômetro para aqui
+3. `../config/bootstrap.sh --out .n3x`: com as imagens recém-construídas, gera as chaves AES do sidecar e do controller (`keygen`), a credencial do serviço `pedidos` (`credential new pedidos --key`, com o segredo já cifrado para o sidecar), os hashes do root e do usuário de leitura (`hash --cost 12`), a `hmac_key` cifrada (`keygen` mais `encrypt --plugin n3x.core`), o certificado de desenvolvimento (`dev-cert` com o nome do controller) e os dois `n3x.yaml` preenchidos a partir dos modelos de `deploy/config/`. Tudo o que é segredo em claro (as duas chaves AES, o `tls.key` e as senhas) vai por contêiner auxiliar direto para volumes nomeados do Docker, com dono 17000:17000 e modo 0440 (as senhas, 0400 do root do contêiner, só para leitura pelo operador); no host, em `.n3x/`, ficam só `sidecar.yaml` e `controller.yaml` (com `ENC[...]` e hashes) e os certificados públicos
+4. `docker compose up -d --wait`: o serviço `n3x-files` (root, roda uma vez e sai com 0) confere dono e modo dos volumes; depois sobem o controller (healthcheck `probe ready`), o sidecar (healthcheck `probe live`) e a aplicação, que entra no namespace de rede do sidecar e escuta em `127.0.0.1:3000`
+5. `curl -si localhost:17000/eco` responde 200 com `x-n3x: 1` no eco; `curl -si localhost:17000/admin` responde 403 com o corpo JSON `{"code":403,"message":"bloqueado"}` e `content-type: application/json; charset=utf-8`
+6. O operador lê a senha do root com `docker run --rm -v n3x-exemplo-senhas:/k:ro busybox cat /k/root-password.txt`, abre `https://localhost:17444` (o certificado é o `dev-cert` autoassinado: o navegador avisa e o guia manda aceitar o aviso), entra como `admin` e vê o sidecar `pedidos` em `connected` com o hash da config; o cronômetro para aqui
 7. Para um serviço que não é o de exemplo, o guia troca o nome do serviço no `bootstrap.sh --service <nome>`, o `app.address` e a imagem da aplicação no `compose.yaml`; nenhuma linha do código da aplicação muda
 
 **Fluxo Kubernetes (kind ou cluster 1.29 ou superior)**
-1. O operador publica as imagens do sidecar e do controller no registro dele (de preferência por digest) e roda o `bootstrap.sh` (ou os comandos manuais do guia)
-2. Cria os namespaces e os objetos de configuração por comando: `ConfigMap` `pedidos-n3x` (o `n3x.yaml`), `Secret` `pedidos-n3x-key` (a chave AES do sidecar), `ConfigMap` `n3x-ca` (a CA), `Secret` `n3x-controller-config` (o `n3x.yaml` do controller, H-10), `Secret` `n3x-controller-aes` e `Secret` do tipo `kubernetes.io/tls` `n3x-controller-tls`
+1. O operador publica as imagens do sidecar e do controller no registro dele (de preferência por digest) e roda o `bootstrap.sh` (ou os comandos manuais do guia); as chaves ficam em volumes nomeados do Docker, não numa pasta do host
+2. Cria os namespaces e os objetos de configuração por comando: `ConfigMap` `pedidos-n3x` (o `n3x.yaml`), `Secret` `pedidos-n3x-key` (a chave AES do sidecar, lida do volume por `docker run --rm -v n3x-exemplo-sidecar-run:/k:ro busybox cat /k/aes.key` e passada por pipe ao `kubectl create secret --from-file=aes.key=/dev/stdin`, sem arquivo no host), `ConfigMap` `n3x-ca` (a CA), `Secret` `n3x-controller-config` (o `n3x.yaml` do controller, confirmado), `Secret` `n3x-controller-aes` e `Secret` do tipo `kubernetes.io/tls` `n3x-controller-tls` (os dois pelo mesmo pipe)
 3. `kubectl apply -k deploy/kubernetes/overlays/<overlay>`: controller com 1 réplica e estratégia `Recreate`, `Service` `n3x-controller`, `NetworkPolicy`; `Deployment` `pedidos` com o sidecar nativo e `Service` apontando para a `17000`
 4. O kubelet sobe o sidecar primeiro (sidecar nativo): `startupProbe` em `/live` passa em cerca de 1 s, a aplicação sobe, `/ready` vai a 200 quando o Envoy e a aplicação estão prontos, e o pod entra nos endpoints
 5. Na exclusão do pod, a aplicação recebe SIGTERM primeiro; com o gatilho, ela chama `POST 127.0.0.1:17021/drain` e continua atendendo enquanto o sidecar fecha as conexões dos clientes; depois que a aplicação sai, o sidecar recebe SIGTERM e termina a drenagem dentro do `terminationGracePeriodSeconds`
 
 **Fluxo ECS (roteiro manual guiado)**
-1. O operador grava a chave AES do sidecar no Secrets Manager e o `n3x.yaml` e a CA no Parameter Store (ou S3), e registra a task definition `deploy/ecs/pedidos-task.json` com o papel de task da política `n3x-files-policy.json`
+1. O operador grava a chave AES do sidecar no Secrets Manager e o `n3x.yaml` (tipo `String`, porque só tem envelopes `ENC[...]`) e a CA no Parameter Store no tier `Advanced` (ou S3), e registra a task definition `deploy/ecs/pedidos-task.json` com o papel de task da política `n3x-files-policy.json`
 2. O contêiner `n3x-files` (não essencial) roda primeiro, lê os três itens com o papel da task e grava `aes.key`, `n3x.yaml` e `ca.pem` no volume efêmero `n3x-run`, com dono 17000 e modo 0440, e sai com 0
 3. O sidecar (`dependsOn` `n3x-files` `SUCCESS`) sobe com `run --config /run/n3x/n3x.yaml`; o health check do contêiner é `n3x probe live`; a aplicação (`dependsOn` sidecar `HEALTHY`) sobe depois
 4. O ALB manda tráfego para a `17000` e confere `17021/ready`; o sidecar aparece no painel com a instância igual ao `DockerId`
@@ -193,15 +211,15 @@ Todo pedido dirigido à FDD 47 no `REGISTRO-DE-DECISOES.md` e nas FDDs tem desti
 3. Se algo mudou, o bot abre o PR `deploy/sync-<data>`; o PR roda o `deploy.yml` inteiro e o compose da FDD 48; o merge é humano
 
 **Fluxos alternativos e exceções**
-- **Aplicação que não pode mudar o código (sem gatilho):** no Kubernetes, `preStop` no contêiner da aplicação com `curl -fsS -X POST http://127.0.0.1:17021/drain; sleep <drain_timeout>`, se a imagem tiver `curl` ou `wget` (H-20); sem nada, vale o risco residual da FDD 29 (I-02 dela): conexões persistentes que chegam entre a saída da aplicação e o SIGTERM do sidecar recebem 503
-- **Arquivo de chave sem leitura para o UID 17000 no compose:** saída 3 (`key_read`, com UID e GID no texto, FDD 28); o guia manda `chown 17000:17000` e `chmod 0440`, ou `user: "17000:<gid do arquivo>"`
+- **Aplicação que não pode mudar o código (sem gatilho):** no Kubernetes, `preStop` no contêiner da aplicação com `curl -fsS -X POST http://127.0.0.1:17021/drain; sleep <drain_timeout>`, se a imagem tiver `curl` ou `wget` (confirmado); sem nada, vale o risco residual da FDD 29 (I-02 dela): conexões persistentes que chegam entre a saída da aplicação e o SIGTERM do sidecar recebem 503
+- **Chave sem leitura para o UID 17000 no compose:** no fluxo padrão não acontece, porque o `n3x-files` aplica dono 17000:17000 e modo 0440 ao volume nomeado antes de o sidecar subir (se ele falhar, o sidecar nem inicia). Para quem prefere a chave numa pasta do host, o guia documenta um contêiner auxiliar, `docker run --rm --user 0 -v "$PWD/.n3x:/w" busybox sh -c 'chown -R 17000:17000 /w && chmod 0440 /w/*.key'`, com a ressalva de que no Docker Desktop a permissão do bind é emulada e pode não ter efeito; sem leitura, a subida sai com 3 (`key_read`, com UID e GID no texto, FDD 28)
 - **ConfigMap montado como diretório em `/etc/n3x`:** saída 5 `image_target` (FDD 25); a regra `k8s_config_subpath` recusa antes, na CI
 - **Pod sem `limits.memory`:** saída 7 `memory_unlimited` (FDD 27); a regra `k8s_memory_limit` recusa antes
 - **Certificado sem o nome de `controller.address` no SAN:** `n3x_controller_connect_failures_total{reason="tls"}` sobe e o alerta crítico AS-12 dispara; o tráfego continua (FDD 38)
 - **Balanceador L7 ou NAT na frente da `17443`:** todos os sidecars parecem vir de um IP; o bloqueio por IP passa a bloquear o balanceador; o guia exige L4 com IP preservado (`externalTrafficPolicy: Local`, NLB com preservação) e `grpc.trusted_proxies` só para proxy L7 que põe `x-forwarded-for`
 - **Fargate:** sem `linuxParameters.tmpfs`; o `/tmp` é um volume efêmero só do sidecar e o aviso `tmp_not_tmpfs` (FDD 28) é esperado e documentado
 - **Imagem pré-release (`-rc.N`) ou alvo `candidate`:** nunca entra em `versions.json` da `main`; só a FDD 48 usa, por pedido manual
-- **Istio:** os arquivos de `deploy/istio/` ficam reservados até a FDD 49; a regra `src_drift` passa a valer para o `EnvoyFilter` quando o arquivo existir
+- **Istio:** os arquivos de `deploy/istio/` ficam reservados até a FDD 49; a regra `src_drift` passa a valer para o `EnvoyFilter` quando o arquivo existir. O estado reservado é interino e **bloqueia o release da v1.0.0** (contrato 9 e seção 9)
 
 **Diagramas**
 
@@ -295,9 +313,9 @@ flowchart LR
   ```
 - Método: n/a
 - Semântica:
-  - Os nomes acima são contrato com a FDD 48 e com o guia: mudam só por adição; renomear exige mudar a FDD 48 no mesmo PR (hipótese H-01)
+  - Os nomes acima são contrato com a FDD 48 e com o guia: mudam só por adição; renomear exige mudar a FDD 48 no mesmo PR (confirmado)
   - `deploy/compose/.n3x/` e `deploy/kubernetes/overlays/*/.n3x/` são saídas do `bootstrap.sh` e ficam no `.gitignore`; nenhum segredo é versionado
-  - `deploy/tools` é um módulo Go aninhado (`github.com/giustech/n3x-sdk/deploy/tools`, hipótese H-03): as dependências dele (YAML, JSON Schema) não entram no `go.mod` do SDK (ADR-011)
+  - `deploy/tools` é um módulo Go aninhado (`github.com/giustech/n3x-sdk/deploy/tools`, confirmado): as dependências dele (YAML, JSON Schema) não entram no `go.mod` do SDK (ADR-011)
   - Os arquivos marcados como cópia (Dockerfiles, regras do core e, depois da FDD 49, o `EnvoyFilter`) nunca são editados à mão: a regra `src_drift` recusa
 
 **Exemplo de requisição**
@@ -321,8 +339,8 @@ ok: layout de deploy/ e docs/ confere (47 arquivos esperados, 0 ausentes, 0 ines
   ```
 - Método: processo (Go); `sync` lê os repositórios pela API do GitHub ou por clone local
 - Semântica:
-  - **`versions.json` (`format: 1`)** é a fonte única das versões que aparecem em `deploy/` e nos guias: as quatro imagens N3X (`tag` e `digest`), a versão do `n3x.example`, as imagens de terceiros (`aws_cli`, `golang` e `distroless_static` da aplicação `eco`, `prometheus`, `grafana`) e as versões de Kubernetes usadas na validação (`kubernetes.min = 1.29.0` e `kubernetes.latest`)
-  - **Escolha do par (H-02):** o par mais novo de `compat/pairs.json` com `results.amd64 == "ok"`, `results.arm64 == "ok"` e `channel == "stable"`, um para `kind: sidecar` (alvo `envoy-1.40`) e um para `kind: controller`; a versão do `n3x.example` é a do SDK da `sidecar-builder` do par (os `examples/` da FDD 46 já usam essa versão). Pré-release (`-rc.N`) e alvo `candidate` nunca entram na `main`
+  - **`versions.json` (`format: 1`)** é a fonte única das versões que aparecem em `deploy/` e nos guias: as quatro imagens N3X (`tag` e `digest`), a versão do `n3x.example`, as imagens de terceiros (`aws_cli`, `busybox` do `n3x-files` do compose e dos comandos de leitura do guia, `golang` e `distroless_static` da aplicação `eco`, `prometheus`, `grafana`) e as versões de Kubernetes usadas na validação (`kubernetes.min = 1.29.0` e `kubernetes.latest`)
+  - **Escolha do par (confirmado):** o par mais novo de `compat/pairs.json` com `results.amd64 == "ok"`, `results.arm64 == "ok"` e `channel == "stable"`, um para `kind: sidecar` (alvo `envoy-1.40`) e um para `kind: controller`; a versão do `n3x.example` é a do SDK da `sidecar-builder` do par (os `examples/` da FDD 46 já usam essa versão). Pré-release (`-rc.N`) e alvo `candidate` nunca entram na `main`
   - **Tags e digests:** toda imagem aparece como `<repositório>:<tag>@sha256:<digest>`; a tag é para leitura humana e o digest é o que vale (ADR-009 do `n3x-builder`)
   - **`SOURCES.json` (`format: 1`):** uma linha por arquivo copiado, com `path` local, `repo`, `ref` (tag), `source` (caminho na origem) e `sha256`; `sync` só copia de tag, nunca de branch
   - **`render`** escreve, a partir de `versions.json`, `sizing.json` e `params.yaml`: as imagens de terceiros do `compose.yaml` e das task definitions do ECS, o `images:` do overlay `exemplo`, os `PrometheusRule` gerados (contrato 12), a tabela de versões e a de dimensionamento nos guias (entre marcadores `<!-- n3x:versions:begin -->` e `<!-- n3x:sizing:begin -->`); `--check` não escreve e sai com 3 se algum arquivo ficaria diferente
@@ -340,6 +358,7 @@ ok: layout de deploy/ e docs/ confere (47 arquivos esperados, 0 ausentes, 0 ines
     "controller_builder": { "ref": "ghcr.io/giustech/n3x/controller-builder:1.0.1",         "digest": "sha256:0a4f8c2e9b61..." },
     "controller":         { "ref": "ghcr.io/giustech/n3x/controller:1.0.2",                 "digest": "sha256:91ab3d7e0c55..." },
     "aws_cli":            { "ref": "public.ecr.aws/aws-cli/aws-cli:2.22.35",                "digest": "sha256:c3f1..." },
+    "busybox":            { "ref": "docker.io/library/busybox:1.37.0",                      "digest": "sha256:2d7b..." },
     "golang":             { "ref": "golang:1.26.1-trixie",                                  "digest": "sha256:4e2a..." },
     "distroless_static":  { "ref": "gcr.io/distroless/static-debian12:nonroot",            "digest": "sha256:8b1d..." },
     "prometheus":         { "ref": "quay.io/prometheus/prometheus:v2.53.3",                 "digest": "sha256:a9c0..." },
@@ -371,14 +390,15 @@ plano apenas; use --write para aplicar
 - Assinatura/Rota:
   ```text
   deploy/config/bootstrap.sh --out <dir> [--service <nome>] [--sidecar-image <ref>] [--controller-image <ref>]
-                             [--controller-name <dns>]... [--force]
+                             [--controller-name <dns>]... [--volume-prefix <nome>] [--keys-dir <dir>] [--force]
   ```
-- Método: processo; chama as imagens com `docker run --rm` (`keygen`, `encrypt`, `credential new`, `hash`, `dev-cert`), sem instalar nada no host
+- Método: processo; chama as imagens com `docker run --rm` (`keygen`, `encrypt`, `credential new`, `hash`, `dev-cert`) e um contêiner auxiliar `busybox` de `versions.json` (root, só para gravar nos volumes), sem instalar nada no host
 - Semântica:
-  - **Caminhos fixos dentro dos contêineres (H-04):** o `n3x.yaml` do serviço em `/etc/n3x/n3x.yaml` (Kubernetes com `subPath`, compose com bind de arquivo) ou em `/run/n3x/n3x.yaml` no ECS (`run --config`); o do controller em `/etc/n3x/controller.yaml`; tudo o que é segredo ou certificado em `/run/n3x/`: `aes.key`, `ca.pem` (sidecar), `tls.crt` e `tls.key` (controller). Assim o mesmo arquivo serve às três topologias e nada é montado como diretório em `/etc/n3x` (FDD 28)
-  - **Endereço do controller (H-05):** `n3x-controller.n3x.svc.cluster.local:17443` em todas as topologias: no Kubernetes é o nome do `Service` `n3x-controller` do namespace `n3x`; no compose é um alias de rede do serviço; no ECS é o nome do serviço `n3x-controller` num namespace privado do Cloud Map chamado `n3x.svc.cluster.local`. O certificado tem esse nome no SAN (FDD 38: o `ServerName` é o host exatamente como escrito)
+  - **Caminhos fixos dentro dos contêineres (confirmado):** o `n3x.yaml` do serviço em `/etc/n3x/n3x.yaml` (Kubernetes com `subPath`, compose com bind de arquivo) ou em `/run/n3x/n3x.yaml` no ECS (`run --config`); o do controller em `/etc/n3x/controller.yaml`; tudo o que é segredo ou certificado em `/run/n3x/`: `aes.key`, `ca.pem` (sidecar), `tls.crt` e `tls.key` (controller). Assim o mesmo arquivo serve às três topologias e nada é montado como diretório em `/etc/n3x` (FDD 28)
+  - **Endereço do controller (confirmado):** FIXO, `n3x-controller.n3x.svc.cluster.local:17443`, em todas as topologias e no mesmo `n3x.yaml` byte a byte (SHA-256 igual): no Kubernetes é o nome do `Service` `n3x-controller` do namespace `n3x`; no compose é um alias de rede do serviço; no ECS é o nome do serviço `n3x-controller` num namespace privado do Cloud Map chamado `n3x.svc.cluster.local`, que o operador precisa criar com esse nome. O certificado tem esse nome no SAN (FDD 38: o `ServerName` é o host exatamente como escrito). Quem precisa de outro domínio troca o modelo e passa `--controller-name` ao `bootstrap.sh` (o guia ensina, e a regra `cfg_controller_address` confere)
+  - **Onde ficam os segredos em claro (compose e kind):** o `bootstrap.sh` não grava chave no host. Cada chave AES, o `tls.key` e as senhas são gerados por contêiner auxiliar (imagem N3X) e passados por pipe, sem arquivo intermediário no host, a um contêiner `busybox` root que os grava em volumes nomeados (`<prefixo>-sidecar-run`, `<prefixo>-controller-run` e `<prefixo>-senhas`; prefixo padrão `n3x-exemplo`), com `umask 0227`, dono 17000:17000 e modo 0440 (as senhas, só do root do contêiner). O serviço `n3x-files` do compose reaplica dono e modo a cada `up`, no mesmo padrão do ECS (`n3x-files`) e do Kubernetes (init, com `fsGroup` e `defaultMode`). Os envelopes `ENC[...]` são gerados dentro do mesmo fluxo, por contêiner auxiliar com a imagem N3X que monta o volume só leitura. O operador lê um valor com `docker run --rm -v <volume>:/k busybox cat /k/<arquivo>` ou `docker cp`. `--keys-dir <dir>` é a alternativa para quem quer a chave numa pasta do host: o `bootstrap.sh` roda um contêiner `--user 0` com `chown 17000:17000` e `chmod 0440` nessa pasta (no Docker Desktop a permissão do bind é emulada e pode não ter efeito)
   - **Marcadores** substituídos de forma literal (sem expressão regular): `@@CONTROLLER_SECRET@@`, `@@SERVICE_SECRET_HASH@@`, `@@ROOT_PASSWORD_HASH@@`, `@@READER_PASSWORD_HASH@@` e `@@HMAC_KEY@@`; `--service` troca também `pedidos` nos dois arquivos
-  - **Saída em `<dir>`:** `sidecar.yaml` e `controller.yaml` (0644), `sidecar-aes.key` e `controller-aes.key` (0440, dono 17000:17000 quando o processo tem permissão; senão aviso com o comando `chown`), `ca.pem` (cópia do `tls.crt`, 0444), `tls.crt` (0444), `tls.key` (0440, dono 17000), `root-password.txt` e `reader-password.txt` (0600, do usuário que rodou); nada é impresso em stdout além dos caminhos; senhas geradas com `n3x-controller keygen` (44 caracteres)
+  - **Saída em `<dir>`:** só arquivos sem segredo em claro: `sidecar.yaml` e `controller.yaml` (0644; têm envelopes `ENC[...]` e hashes bcrypt), `ca.pem` (cópia do `tls.crt`, 0444) e `tls.crt` (0444). Nos volumes nomeados (e não no host): `aes.key` do sidecar e do controller, `ca.pem` e `tls.crt` (cópias), `tls.key` (todos 0440, dono 17000:17000) e `root-password.txt` e `reader-password.txt` (senhas geradas com `n3x-controller keygen`, 44 caracteres). Com `--keys-dir`, as chaves ficam em `<dir>/sidecar-aes.key` e `controller-aes.key`, `tls.key` (0440, dono 17000:17000 pelo contêiner auxiliar). Nada é impresso em stdout além dos caminhos e nomes de volume
   - **Uso só para desenvolvimento e para a CI:** o certificado vem do `dev-cert` (30 dias, aviso `tls_dev_cert` no controller); em produção o guia mostra os mesmos comandos um a um, com a senha do root lida por `read -rs` e o certificado da PKI do operador
   - **Saídas:** 0 ok; 1 uso; 2 imagem ou `docker` indisponível ou comando N3X falhou (repassa o código N3X na mensagem); 3 `<dir>` já tem arquivos e falta `--force`
   - Os modelos usam aspas em todo texto que o YAML 1.1 poderia ler como outro tipo (pedido da FDD 02)
@@ -441,11 +461,11 @@ $ deploy/config/bootstrap.sh --out deploy/compose/.n3x
 
 **Exemplo de resposta**
 ```text
-chaves: deploy/compose/.n3x/sidecar-aes.key, deploy/compose/.n3x/controller-aes.key (0440, 17000:17000)
+chaves: volumes n3x-exemplo-sidecar-run e n3x-exemplo-controller-run (aes.key, 0440, 17000:17000); nenhuma chave no host
 credencial: services.pedidos.secret_hash e controller.secret (cifrado com n3x:v1:pedidos)
-root e leitura: hashes bcrypt custo 12; senhas em deploy/compose/.n3x/root-password.txt e reader-password.txt (0600)
+root e leitura: hashes bcrypt custo 12; senhas no volume n3x-exemplo-senhas (root-password.txt e reader-password.txt)
 hmac_key: cifrada com n3x:v1:controller:n3x.core
-certificado: dev-cert com SANs localhost, 127.0.0.1, ::1, n3x-controller, n3x-controller.n3x.svc, n3x-controller.n3x.svc.cluster.local (30 dias; só desenvolvimento)
+certificado: dev-cert com SANs localhost, 127.0.0.1, ::1, n3x-controller, n3x-controller.n3x.svc, n3x-controller.n3x.svc.cluster.local (30 dias; só desenvolvimento); tls.key no volume n3x-exemplo-controller-run
 configs: deploy/compose/.n3x/sidecar.yaml (sha256 3c9e...), deploy/compose/.n3x/controller.yaml
 ok
 ```
@@ -459,7 +479,7 @@ ok
 - Semântica de status/headers:
   - `/healthz`: 200 `ok`; vira 503 depois do SIGTERM
   - `/eco`: 200 com JSON `{"method","path","headers"}`, os cabeçalhos recebidos em ordem alfabética (é como o teste confere o `x-n3x: 1` posto pelo `n3x.example`)
-  - `/admin`: 200 `admin` na aplicação; atrás do sidecar, o `n3x.example` nega antes com 403 `bloqueado` (FDD 13)
+  - `/admin`: 200 `admin` na aplicação; atrás do sidecar, o `n3x.example` nega antes com 403 e o corpo JSON `{"code":403,"message":"bloqueado"}`, `content-type: application/json; charset=utf-8` (FDDs 13 e 05)
   - **SIGTERM (contrato 10 da FDD 29):** chama `POST` no `--drain-trigger` (espera 202 ou 409; falha só é logada), continua atendendo e faz `Shutdown` com o prazo `--shutdown`; sai com 0
   - Imagem: Go da `versions.json` (`FROM --platform=$BUILDPLATFORM` no build), final `distroless_static:nonroot` por digest, UID 65532, `CGO_ENABLED=0`; só biblioteca padrão; sem porta exposta além da de `--listen`
   - HTTP/1.1 e h2c na mesma porta (`http.Server` com `Protocols` HTTP/1 e HTTP/2 sem TLS); gRPC e a aplicação Python ficam com a FDD 48, por adição nesta pasta (pedido à FDD 48)
@@ -486,7 +506,7 @@ content-type: application/json
 - Assinatura/Rota: `deploy/images/sidecar/Dockerfile` e `deploy/images/controller/Dockerfile`, cópias byte a byte de `n3x-builder/examples/{sidecar,controller}/Dockerfile` na tag do par de `versions.json`
 - Método: `docker buildx build` ou `docker compose build`
 - Semântica:
-  - Três estágios: `build` (`FROM --platform=$BUILDPLATFORM` da imagem de build, `RUN n3x-plugin add` por plugin, `ARG TARGETARCH`, `RUN n3x-plugin build`), `out` (`FROM scratch`, `COPY --from=build /out/ /`, para ler `manifest.json` sem exportar o estágio inteiro) e o final (imagem de runtime por digest, só `COPY` do artefato). O estágio final continua o último, então é o alvo padrão. O estágio `out` é pedido à FDD 46 (H-23)
+  - Três estágios: `build` (`FROM --platform=$BUILDPLATFORM` da imagem de build, `RUN n3x-plugin add` por plugin, `ARG TARGETARCH`, `RUN n3x-plugin build`), `out` (`FROM scratch`, `COPY --from=build /out/ /`, para ler `manifest.json` sem exportar o estágio inteiro) e o final (imagem de runtime por digest, só `COPY` do artefato). O estágio final continua o último, então é o alvo padrão. O estágio `out` é pedido à FDD 46 (confirmado)
   - Leitura do manifesto na CI do operador (FDD 22): `docker buildx build --target out -o type=local,dest=out .` e depois `jq` sobre `out/manifest.json`
   - Depuração (FDD 21 e 23): `docker buildx build --target build --load -t dbg .` e `docker run --rm -it --entrypoint sh dbg` para ver `/n3x/build` e `/n3x/build/verify`
   - Plugin privado: `ARG GOPRIVATE=github.com/<org>/*` antes dos `add`; `--mount=type=secret,id=git_auth` na linha `add` do módulo privado e na linha `build`; `--secret id=git_auth,env=GITHUB_TOKEN` com token só de leitura, escopo mínimo e vida curta (FDDs 20, 21 e 24)
@@ -528,26 +548,52 @@ online 2026-10-20T03:11:09Z
 
 **Contrato 6: topologia docker compose (`deploy/compose/compose.yaml`)**
 - Tipo: arquivo Compose Specification (Docker Compose v2.20 ou superior)
-- Assinatura/Rota: projeto `n3x-exemplo` com os serviços `n3x-controller`, `pedidos-n3x` (sidecar) e `pedidos` (aplicação); perfil `observabilidade` com `prometheus` e `grafana`
+- Assinatura/Rota: projeto `n3x-exemplo` com os serviços `n3x-files` (preparo dos volumes de chave), `n3x-controller`, `pedidos-n3x` (sidecar) e `pedidos` (aplicação); perfil `observabilidade` com `prometheus` e `grafana`
 - Método: `docker compose build`, `docker compose up -d --wait`, `docker compose down`
 - Semântica:
   - **Aplicação no namespace de rede do sidecar:** `network_mode: "service:pedidos-n3x"`, sem `ports`; ela escuta em `127.0.0.1:3000` e só o sidecar publica `17000`
-  - **Controller:** só `127.0.0.1:17444` publicado no host (painel); `17443` e `17091` ficam na rede do projeto; alias de rede `n3x-controller.n3x.svc.cluster.local` (H-05)
+  - **Controller:** só `127.0.0.1:17444` publicado no host (painel); `17443` e `17091` ficam na rede do projeto; alias de rede `n3x-controller.n3x.svc.cluster.local` (confirmado)
   - **Health (contrato 10 da FDD 29 e contrato 8 da FDD 30):** sidecar `["CMD","/usr/local/bin/n3x","probe","live"]`; controller `["CMD","/usr/local/bin/n3x-controller","probe","ready"]` (nada depende dele com `service_healthy`, então o `ready` só informa o `--wait`); a aplicação usa `depends_on` `service_healthy` no sidecar, que só olha o `/live`, nunca o `/ready` (impasse da FDD 29)
   - **Prazos:** `stop_grace_period` do sidecar 30 s (`drain_timeout` 20 s mais 10 s); da aplicação 25 s (`--shutdown` 20 s mais folga); do controller 40 s (`shutdown_timeout` 20 s + 2 s + 5 s x 2 plugins + 1 s = 33 s, arredondado para cima). O compose para a aplicação primeiro (ela depende do sidecar)
-  - **Endurecimento (contrato 4 da FDD 28):** `read_only: true`, `cap_drop: [ALL]`, `security_opt: ["no-new-privileges:true"]`, `ulimits: {core: 0}`, `memswap_limit` igual a `mem_limit` (sem swap); sidecar com `tmpfs: ["/tmp:size=16m,mode=1777"]` (H-11), que conta no limite de memória
-  - **Recursos (H-12, até as FDDs 50 e 51):** sidecar `mem_limit: 256m` e `cpus: 1`; controller `mem_limit: 512m` e `cpus: 1`; aplicação `mem_limit: 128m`
-  - **Arquivos:** bind de arquivo de `.n3x/` para os caminhos do contrato 3, todos `:ro`; o host precisa dar leitura ao UID 17000 (dono 17000 ou grupo com 0440); `user: "17000:<gid>"` é a contingência documentada
+  - **Endurecimento (contrato 4 da FDD 28):** `read_only: true`, `cap_drop: [ALL]`, `security_opt: ["no-new-privileges:true"]`, `ulimits: {core: 0}`, `memswap_limit` igual a `mem_limit` (sem swap); sidecar com `tmpfs: ["/tmp:size=16m,mode=1777"]` (confirmado), que conta no limite de memória
+  - **Recursos (confirmado, até as FDDs 50 e 51):** sidecar `mem_limit: 256m` e `cpus: 1`; controller `mem_limit: 512m` e `cpus: 1`; aplicação `mem_limit: 128m`
+  - **Chave em volume nomeado, não no host:** o serviço `n3x-files` (imagem `busybox` de `versions.json`, `user: "0:0"`, `restart: "no"`, `read_only: true`, `cap_drop: [ALL]` com `cap_add: [CHOWN, FOWNER]`, sem rede útil) monta os volumes `n3x-exemplo-sidecar-run` e `n3x-exemplo-controller-run`, aplica dono 17000:17000, modo 0550 no diretório e 0440 nos arquivos e confere que `aes.key` e `tls.key` existem e não estão vazios; o `bootstrap.sh` grava os valores pela primeira vez (contrato 3). Controller e sidecar usam `depends_on` do `n3x-files` com `condition: service_completed_successfully` e montam o volume só leitura em `/run/n3x`. Funciona igual em Linux, macOS e Windows (WSL2), porque não depende de permissão de arquivo do host. O `n3x-files` não é serviço N3X para a regra `compose_hardening`, mas tem a própria verificação (`cap_add` só `CHOWN` e `FOWNER`)
+  - **Arquivos do host:** bind de arquivo só de `sidecar.yaml` e `controller.yaml` (sem segredo em claro) para os caminhos do contrato 3, `:ro`; a leitura do UID 17000 é garantida pelo `n3x-files`. A alternativa com pasta do host (`--keys-dir`, `docker run --user 0` com `chown`/`chmod`) e a contingência `user: "17000:<gid>"` ficam documentadas no guia
+  - **Certificado de desenvolvimento:** o compose usa o `dev-cert` autoassinado (30 dias); o navegador avisa ao abrir `https://localhost:17444` e o guia manda aceitar o aviso; em produção, a PKI do operador
+  - **Exposição de exemplo:** `17000:17000` é publicado em todas as interfaces do host e o painel só em `127.0.0.1:17444`; é exemplo de desenvolvimento e de CI, e o guia diz para restringir em outro ambiente
   - **Identidade:** o sidecar se identifica pelo ID curto do contêiner (FDD 25); `hostname:` fixo no compose dá a mesma instância a duas réplicas e é proibido pela regra `compose_no_hostname` quando há `deploy.replicas` maior que 1
   - Nenhuma variável `N3X_*`, `GOMEMLIMIT`, `GOMAXPROCS`, `GODEBUG` ou `GOGC` nos serviços N3X (regra `compose_no_env`)
 
 **Exemplo de requisição** (trecho de `deploy/compose/compose.yaml`)
 ```yaml
 name: n3x-exemplo
+volumes:
+  n3x-sidecar-run: { name: n3x-exemplo-sidecar-run }
+  n3x-controller-run: { name: n3x-exemplo-controller-run }
 services:
+  n3x-files:
+    image: docker.io/library/busybox:1.37.0@sha256:2d7b...   # gerado pelo render
+    user: "0:0"
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - n3x-sidecar-run:/k/sidecar
+      - n3x-controller-run:/k/controller
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        for d in sidecar controller; do chown -R 17000:17000 /k/$d; chmod 0550 /k/$d; chmod 0440 /k/$d/*; done
+        test -s /k/sidecar/aes.key && test -s /k/controller/aes.key && test -s /k/controller/tls.key
   n3x-controller:
     build: { context: ../images/controller }
     image: n3x-local/n3x-controller:exemplo
+    depends_on:
+      n3x-files: { condition: service_completed_successfully }
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -562,9 +608,7 @@ services:
         aliases: ["n3x-controller.n3x.svc.cluster.local"]
     volumes:
       - ./.n3x/controller.yaml:/etc/n3x/controller.yaml:ro
-      - ./.n3x/controller-aes.key:/run/n3x/aes.key:ro
-      - ./.n3x/tls.crt:/run/n3x/tls.crt:ro
-      - ./.n3x/tls.key:/run/n3x/tls.key:ro
+      - n3x-controller-run:/run/n3x:ro   # aes.key, tls.crt e tls.key (17000:17000, 0440)
     healthcheck:
       test: ["CMD", "/usr/local/bin/n3x-controller", "probe", "ready"]
       interval: 5s
@@ -574,6 +618,8 @@ services:
   pedidos-n3x:
     build: { context: ../images/sidecar }
     image: n3x-local/pedidos-sidecar:exemplo
+    depends_on:
+      n3x-files: { condition: service_completed_successfully }
     read_only: true
     tmpfs: ["/tmp:size=16m,mode=1777"]
     cap_drop: [ALL]
@@ -586,8 +632,7 @@ services:
     ports: ["17000:17000"]
     volumes:
       - ./.n3x/sidecar.yaml:/etc/n3x/n3x.yaml:ro
-      - ./.n3x/sidecar-aes.key:/run/n3x/aes.key:ro
-      - ./.n3x/ca.pem:/run/n3x/ca.pem:ro
+      - n3x-sidecar-run:/run/n3x:ro   # aes.key e ca.pem (17000:17000, 0440)
     healthcheck:
       test: ["CMD", "/usr/local/bin/n3x", "probe", "live"]
       interval: 5s
@@ -612,6 +657,7 @@ $ docker compose up -d --wait && docker compose ps --format '{{.Service}} {{.Hea
 
 **Exemplo de resposta**
 ```text
+ ✔ Container n3x-exemplo-n3x-files-1       Exited (0)
  ✔ Container n3x-exemplo-n3x-controller-1  Healthy
  ✔ Container n3x-exemplo-pedidos-n3x-1     Healthy
  ✔ Container n3x-exemplo-pedidos-1         Started
@@ -630,21 +676,21 @@ pedidos
   - **Sidecar nativo (ADR-007):** contêiner `n3x` em `initContainers` com `restartPolicy: Always`; portas nomeadas `http` (17000), `health` (17021) e `n3x-metrics` (17090); a aplicação é um contêiner comum sem `ports`
   - **Probes (contrato 10 da FDD 29):** `startupProbe` `GET /live` em `health` (`periodSeconds: 1`, `failureThreshold: 30`), `livenessProbe` `GET /live` (10 s, 3 falhas), `readinessProbe` `GET /ready` (5 s, 1 falha); nunca `/ready` no `startupProbe`
   - **Prazo:** `terminationGracePeriodSeconds` maior ou igual à parada da aplicação mais `drain_timeout` mais 10 s, mais o `sleep` do `preStop` quando houver (45 s no exemplo: 15 s, 20 s e 10 s); a anotação `n3x.io/app-stop-seconds` (padrão 15) alimenta a regra `k8s_grace_period`
-  - **Segurança (contrato 4 da FDD 28):** no pod, `runAsNonRoot: true`, `runAsUser: 17000`, `runAsGroup: 17000`, `fsGroup: 17000`, `seccompProfile: {type: RuntimeDefault}`; no contêiner `n3x`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities: {drop: [ALL]}`
+  - **Segurança (contrato 4 da FDD 28):** no pod, `runAsNonRoot: true`, `fsGroup: 17000` (para o contêiner `n3x` ler a chave; o pod não fixa `runAsUser`, que valeria também para a aplicação) e `seccompProfile: {type: RuntimeDefault}`; no contêiner `n3x`, `runAsUser: 17000`, `runAsGroup: 17000`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false` e `capabilities: {drop: [ALL]}`; a aplicação `eco` mantém o UID dela (`runAsUser: 65532`, contrato 4) com os mesmos `readOnlyRootFilesystem`, `allowPrivilegeEscalation` e `drop: [ALL]`
   - **Volumes:** `n3x.yaml` do `ConfigMap` `pedidos-n3x` montado com `subPath: n3x.yaml` em `/etc/n3x/n3x.yaml`; volume `projected` em `/run/n3x` com o `Secret` `pedidos-n3x-key` (`aes.key`) e o `ConfigMap` `n3x-ca` (`ca.pem`), `defaultMode: 0440`; `/tmp` em `emptyDir` com `medium: Memory` e `sizeLimit: 16Mi`; os três só no contêiner `n3x` (regra `k8s_private_volumes`)
-  - **Recursos (H-12):** `n3x` com `requests` e `limits` de `memory: 256Mi` e `limits.cpu: 1` (`requests.cpu: 250m`); sem `limits.memory` o sidecar sai com 7
+  - **Recursos (confirmado):** `n3x` com `requests` e `limits` de `memory: 256Mi` e `limits.cpu: 1` (`requests.cpu: 250m`); sem `limits.memory` o sidecar sai com 7
   - **Identidade:** nome do pod (FDD 25); `spec.hostname` é proibido com mais de uma réplica (`k8s_no_hostname`)
-  - **Rede (H-19):** `Service` `pedidos` só com `targetPort: http`; `NetworkPolicy` do namespace `pedidos` aceita entrada só nas portas 17000 (qualquer origem) e 17090 (namespace com rótulo `n3x.io/monitoring: "true"`), o que bloqueia a porta da aplicação mesmo se ela escutar em `0.0.0.0`; saída livre (o sidecar precisa do controller e a aplicação das dependências dela)
-  - **Aplicação sem mudar código:** `preStop` opcional com `curl -fsS -X POST http://127.0.0.1:17021/drain; sleep 20` quando a imagem tem `curl` (H-20), somado ao prazo
+  - **Rede (confirmado):** `Service` `pedidos` só com `targetPort: http`; `NetworkPolicy` do namespace `pedidos` aceita entrada só nas portas 17000 (qualquer origem) e 17090 (namespace com rótulo `n3x.io/monitoring: "true"`), o que bloqueia a porta da aplicação mesmo se ela escutar em `0.0.0.0`; saída livre (o sidecar precisa do controller e a aplicação das dependências dela); a saída livre é decisão do exemplo, e o guia descreve o endurecimento opcional (`egress` só para o controller, DNS e dependências) e como o controller é alcançado de outro namespace (pelo FQDN fixo e pela política de entrada do namespace `n3x`)
+  - **Aplicação sem mudar código:** `preStop` opcional com `curl -fsS -X POST http://127.0.0.1:17021/drain; sleep 20` quando a imagem tem `curl` (confirmado), somado ao prazo
 - Semântica do controller:
   - `Deployment` `n3x-controller` com `replicas: 1` e `strategy: {type: Recreate}` (instância única, ADR-001); sem `PodDisruptionBudget` (com uma réplica, ele travaria o dreno do nó)
   - Probes na porta `ops` (17091): `startupProbe` `/live` (1 s, 30 falhas), `livenessProbe` `/live`, `readinessProbe` `/ready`; a `17091` abre antes dos plugins, então subida lenta de plugin não reinicia o pod (FDD 30)
   - `terminationGracePeriodSeconds` maior ou igual a `shutdown_timeout + 2 s + 5 s x N + 1 s`, com `N` igual ao número de plugins com metade de controller (40 s no exemplo, com N = 2); a anotação `n3x.io/controller-plugins` alimenta a regra
-  - Mesmo `securityContext` do sidecar; não precisa de `/tmp` (contrato 13 da FDD 30); `resources` 1 vCPU e `512Mi` (H-12); `GOMEMLIMIT` é calculado pelo host (80%), nunca por variável
-  - Volumes: `Secret` `n3x-controller-config` com `subPath: controller.yaml` em `/etc/n3x/controller.yaml` (H-10: tem hashes bcrypt, então `Secret` e não `ConfigMap`); `projected` em `/run/n3x` com `n3x-controller-aes` (`aes.key`) e `n3x-controller-tls` (`tls.crt`, `tls.key`), `defaultMode: 0440`
+  - Mesmo `securityContext` do sidecar; não precisa de `/tmp` (contrato 13 da FDD 30); `resources` 1 vCPU e `512Mi` (confirmado); `GOMEMLIMIT` é calculado pelo host (80%), nunca por variável; também `runAsUser: 17000` no contêiner e `fsGroup: 17000` no pod
+  - Volumes: `Secret` `n3x-controller-config` com `subPath: controller.yaml` em `/etc/n3x/controller.yaml` (confirmado: tem hashes bcrypt, então `Secret` e não `ConfigMap`); `projected` em `/run/n3x` com `n3x-controller-aes` (`aes.key`) e `n3x-controller-tls` (`tls.crt`, `tls.key`), `defaultMode: 0440`
   - `Service` `n3x-controller` (`ClusterIP`) com as portas `grpc` 17443 e `panel` 17444; a `17091` não entra no `Service` (só o Prometheus pela descoberta de pods); o `ClusterIP` preserva o IP do pod de origem
-  - `NetworkPolicy` do namespace `n3x` (H-19): `17443` só de pods com rótulo `n3x.io/sidecar: "true"` em namespaces com `n3x.io/sidecars: "true"`; `17444` só do namespace do ingress (rótulo `n3x.io/panel-ingress: "true"`) ou de uma faixa do operador; `17091` só do namespace de monitoramento; a regra é um exemplo e o guia explica como adaptar
-  - Certificado (H-09): `Secret` `kubernetes.io/tls` criado pelo operador, com SAN `n3x-controller`, `n3x-controller.n3x.svc` e `n3x-controller.n3x.svc.cluster.local`; no overlay `kind`, vem do `bootstrap.sh` (`dev-cert`); no overlay `exemplo`, um `Certificate` do cert-manager opcional, comentado
+  - `NetworkPolicy` do namespace `n3x` (confirmado): `17443` só de pods com rótulo `n3x.io/sidecar: "true"` em namespaces com `n3x.io/sidecars: "true"`; `17444` só do namespace do ingress (rótulo `n3x.io/panel-ingress: "true"`) ou de uma faixa do operador; `17091` só do namespace de monitoramento; a regra é um exemplo e o guia explica como adaptar
+  - Certificado (confirmado): `Secret` `kubernetes.io/tls` criado pelo operador, com SAN `n3x-controller`, `n3x-controller.n3x.svc` e `n3x-controller.n3x.svc.cluster.local`; no overlay `kind`, vem do `bootstrap.sh` (`dev-cert`); no overlay `exemplo`, um `Certificate` do cert-manager opcional, comentado
   - Exposição fora do cluster: a `17443` só por L4 que preserva o IP (`type: LoadBalancer` com `externalTrafficPolicy: Local`, ou NLB com preservação do IP do cliente); nunca por Ingress L7 sem `grpc.trusted_proxies` (FDD 33); o painel por Ingress com backend HTTPS, sem reescrever `Host` nem `Origin`, com `panel.trusted_proxies` igual à faixa do controlador de Ingress (FDDs 34 e 35)
 - Overlays: `kind` (imagens sem digest no arquivo; a FDD 48 define na execução com `kustomize edit set image`; arquivos de `.n3x/` locais) e `exemplo` (imagens do registro do operador por digest, `images:` gerado pelo `render` para as imagens de terceiros); a base nunca é aplicada sozinha
 
@@ -664,8 +710,6 @@ spec:
       terminationGracePeriodSeconds: 45
       securityContext:
         runAsNonRoot: true
-        runAsUser: 17000
-        runAsGroup: 17000
         fsGroup: 17000
         seccompProfile: { type: RuntimeDefault }
       initContainers:
@@ -683,6 +727,8 @@ spec:
             requests: { cpu: 250m, memory: 256Mi }
             limits: { cpu: "1", memory: 256Mi }
           securityContext:
+            runAsUser: 17000
+            runAsGroup: 17000
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }
@@ -696,6 +742,7 @@ spec:
           args: ["--listen", "127.0.0.1:3000"]
           resources: { limits: { memory: 128Mi } }
           securityContext:
+            runAsUser: 65532   # UID da própria aplicação, não o 17000 do N3X
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }
@@ -713,7 +760,7 @@ spec:
 ```
 ```text
 $ kubectl -n pedidos create configmap pedidos-n3x --from-file=n3x.yaml=.n3x/sidecar.yaml
-$ kubectl -n pedidos create secret generic pedidos-n3x-key --from-file=aes.key=.n3x/sidecar-aes.key
+$ docker run --rm -v n3x-exemplo-sidecar-run:/k:ro busybox cat /k/aes.key | kubectl -n pedidos create secret generic pedidos-n3x-key --from-file=aes.key=/dev/stdin
 $ kubectl -n pedidos create configmap n3x-ca --from-file=ca.pem=.n3x/ca.pem
 $ kubectl apply -k deploy/kubernetes/overlays/kind && kubectl -n pedidos rollout status deploy/pedidos
 ```
@@ -734,13 +781,18 @@ pedidos-6d9c7b8f5d-v8mzt   2/2     Running   0          41s
 - Assinatura/Rota: `deploy/ecs/pedidos-task.json`, `deploy/ecs/controller-task.json`, `deploy/ecs/n3x-files.sh`, `deploy/ecs/n3x-files-policy.json`
 - Método: n/a (registro manual no roteiro do contrato 17)
 - Semântica:
-  - **L-28 fechada (H-07):** o ECS só entrega segredo como variável de ambiente (`secrets`), o que a regra do FR-001 proíbe para a chave. A task tem um contêiner `n3x-files` com `essential: false`, a imagem `aws_cli` de `versions.json` por digest e `entryPoint: ["sh","-c"]`, com o texto de `deploy/ecs/n3x-files.sh` copiado para o `command` pelo `deploytool render` (o ECS não monta arquivo do repositório); ele lê com o papel da task a chave do Secrets Manager (`secretsmanager:GetSecretValue` só no ARN dela) e o `n3x.yaml` e a CA do Parameter Store (`ssm:GetParameter`; S3 como alternativa para arquivo acima de 8 KiB), grava em `/run/n3x` no volume efêmero `n3x-run` com `umask 0227`, `chown 17000:17000` e `chmod 0440`, e sai com 0. O valor nunca passa por variável de ambiente, log ou task definition; o script roda com `set -eu`, sem `-x`
+  - **L-28 fechada (confirmado):** o ECS só entrega segredo como variável de ambiente (`secrets`), o que a regra do FR-001 proíbe para a chave. A task tem um contêiner `n3x-files` com `essential: false`, a imagem `aws_cli` de `versions.json` por digest e `entryPoint: ["sh","-c"]`, com o texto de `deploy/ecs/n3x-files.sh` copiado para o `command` pelo `deploytool render` (o ECS não monta arquivo do repositório); ele lê com o papel da task a chave do Secrets Manager (`secretsmanager:GetSecretValue` só no ARN dela) e o `n3x.yaml` e a CA do Parameter Store (`ssm:GetParameter`), grava em `/run/n3x` no volume efêmero `n3x-run` com `umask 0227`, `chown 17000:17000` e `chmod 0440`, e sai com 0. O valor nunca passa por variável de ambiente, log ou task definition; o script roda com `set -eu`, sem `-x`
+  - **Parameter Store e tamanho:** o exemplo assume o tier `Advanced`, que aceita até 8 KiB por parâmetro (o tier `Standard` aceita 4 KiB); o limite de 8 KiB citado é o do `Advanced`, e acima disso o `n3x.yaml` ou a CA vão para o S3 (`s3:GetObject` só no objeto, e `aws s3 cp` no lugar de `ssm get-parameter`). O `n3x.yaml` do sidecar tem só envelopes `ENC[...]` e nenhum segredo em claro, então pode ficar em parâmetro `String`, sem `SecureString`; a CA é pública. O `controller.yaml` (hashes bcrypt) fica no Secrets Manager
+  - **Risco residual aceito (confirmado):** o papel da task é visível a todos os contêineres da task, então a aplicação pode chamar a API da AWS e ler a chave AES no Secrets Manager; no Kubernetes e no compose o arquivo da chave nem é montado na aplicação. Mitigações: IAM de menor privilégio (só os ARNs necessários, abaixo), `essential: false` no `n3x-files` e aviso explícito da diferença em `op/seguranca.md`. Endurecimento opcional descrito em `op/ecs.md`: provisionar um EFS com ponto de acesso (UID 17000) que já contém a chave, montado só no `n3x`, e a task sem permissão no Secrets Manager nem no Parameter Store; o `n3x.yaml` não muda
+  - **Política IAM do papel da task (`n3x-files-policy.json`, `pedidos`):** três declarações, todas `Allow` e sem curinga de recurso: `secretsmanager:GetSecretValue` no ARN `arn:aws:secretsmanager:<região>:<conta>:secret:pedidos/n3x/aes-key-*` (o sufixo aleatório do Secrets Manager); `ssm:GetParameter` nos ARNs `arn:aws:ssm:<região>:<conta>:parameter/pedidos/n3x/n3x.yaml` e `.../parameter/n3x/ca.pem`; e, só se o segredo usar uma chave KMS própria, `kms:Decrypt` nessa chave com a condição `kms:ViaService` do Secrets Manager. O papel de execução (puxar imagem e escrever no CloudWatch) é outro e fica fora desta política. O papel do controller (`n3x-controller-n3x-files`) tem as mesmas declarações para `n3x/controller/aes-key`, `n3x/controller/config` (o `controller.yaml`), `n3x/controller/tls-crt` e `n3x/controller/tls-key`, e nada do `pedidos`; o arquivo do controller é gerado pelo `render` a partir do mesmo modelo, trocando os ARNs
+  - **Grupos de segurança:** o do `pedidos` está no item do balanceador abaixo; o do controller aceita entrada em 17443 só dos grupos de segurança das tasks de serviços com sidecar (referência de grupo, não faixa de IP), em 17444 só da faixa do operador ou do grupo do balanceador do painel, e em 17091 só do grupo do coletor; saída livre. O Cloud Map devolve o IP da task, então a `17443` chega com o IP de origem preservado
   - **Ordem:** `n3x` com `dependsOn` `[{"containerName":"n3x-files","condition":"SUCCESS"}]`; aplicação com `dependsOn` `[{"containerName":"n3x","condition":"HEALTHY"}]`; o health do sidecar é `["CMD","/usr/local/bin/n3x","probe","live"]` (intervalo 10 s, prazo 3 s, 3 tentativas, `startPeriod` 10 s); nunca `probe ready` no health usado por `dependsOn` `HEALTHY` (impasse da FDD 29)
   - **`n3x`:** `command: ["run","--config","/run/n3x/n3x.yaml"]` (o ECS não monta arquivo isolado, e um volume em `/etc/n3x` esconderia `/etc/n3x/target`); `user: "17000:17000"`; `readonlyRootFilesystem: true`; `linuxParameters.capabilities.drop: ["ALL"]`; `initProcessEnabled: false` (o `n3x` é o PID 1, FDD 27); `memory: 256` (limite rígido do contêiner; sem ele o cgroup pode ficar sem limite e o sidecar sai com 7); `cpu: 1024`; `stopTimeout: 30` (`drain_timeout` mais 10 s); `portMappings` 17000, 17021 e 17090; `/tmp` no volume efêmero `n3x-tmp` só do sidecar (Fargate não aceita `tmpfs`; aviso `tmp_not_tmpfs` esperado; no EC2, `linuxParameters.tmpfs` e `maxSwap: 0`)
   - **Aplicação:** sem `portMappings` além do que ela mesma precisa; escuta em `127.0.0.1:3000`; não monta `n3x-run` nem `n3x-tmp` (`ecs_private_volumes`); `stopTimeout` de 25 s; o ECS para a aplicação antes do sidecar (ordem inversa do `dependsOn`)
   - **Identidade (FDD 25):** o agente injeta `ECS_CONTAINER_METADATA_URI_V4`; a task definition nunca define essa variável, nem `KUBERNETES_SERVICE_HOST`; a instância é o `DockerId` (12 hex no EC2, inteiro no Fargate)
-  - **Balanceador (H-26):** target group `ip` na porta 17000, health check na porta 17021, caminho `/ready`, `matcher` 200, intervalo 5 s, 2 sucessos e 2 falhas; `deregistration_delay.timeout_seconds` 15; grupo de segurança da task aceita 17000 e 17021 só do ALB e 17090 só do coletor
-  - **Controller no ECS (H-27):** `controller-task.json` com o mesmo `n3x-files` (chave, `controller.yaml` do Secrets Manager por ter hashes, `tls.crt` e `tls.key`), `command: ["run","--config","/run/n3x/controller.yaml"]`, `stopTimeout: 40`, health `["CMD","/usr/local/bin/n3x-controller","probe","live"]`, `memory: 512`, `desiredCount: 1` com `deploymentConfiguration` `maximumPercent: 100` e `minimumHealthyPercent: 0` (instância única); descoberta pelo Cloud Map (namespace privado `n3x.svc.cluster.local`, serviço `n3x-controller`, registro A), que entrega o IP da task e preserva o IP de origem; nunca Service Connect na `17443`, porque o proxy dele troca o IP de origem e o bloqueio por IP passaria a valer para o proxy
+  - **CPU e memória da task no Fargate:** a task do `pedidos` usa `cpu: "1024"` e `memory: "2048"`, combinação válida do Fargate (1 vCPU aceita de 2 a 8 GiB) que acomoda o sidecar (`cpu` 1024 e `memory` 256, conforme as reservas do contrato 7), a aplicação (128) e o `n3x-files` (256, só durante a preparação); o `cpu: "2048"` com `memory: "1024"` do rascunho anterior era inválido. O controller usa a mesma combinação para 512 MiB do `n3x-controller` mais o `n3x-files`
+  - **Balanceador (confirmado):** target group `ip` na porta 17000, health check na porta 17021, caminho `/ready`, `matcher` 200, intervalo 5 s, 2 sucessos e 2 falhas; `deregistration_delay.timeout_seconds` 15; grupo de segurança da task aceita 17000 e 17021 só do ALB e 17090 só do coletor
+  - **Controller no ECS (confirmado):** `controller-task.json` com o mesmo `n3x-files` (chave, `controller.yaml` do Secrets Manager por ter hashes, `tls.crt` e `tls.key`), `command: ["run","--config","/run/n3x/controller.yaml"]`, `stopTimeout: 40`, health `["CMD","/usr/local/bin/n3x-controller","probe","live"]`, `memory: 512`, `desiredCount: 1` com `deploymentConfiguration` `maximumPercent: 100` e `minimumHealthyPercent: 0` (instância única); descoberta pelo Cloud Map (namespace privado `n3x.svc.cluster.local`, serviço `n3x-controller`, registro A), que entrega o IP da task e preserva o IP de origem; nunca Service Connect na `17443`, porque o proxy dele troca o IP de origem e o bloqueio por IP passaria a valer para o proxy
   - **Logs:** `awslogs` em JSON (stderr dos processos); o roteiro confere que o canário não aparece no CloudWatch
 
 **Exemplo de requisição** (trecho de `deploy/ecs/pedidos-task.json`)
@@ -749,12 +801,12 @@ pedidos-6d9c7b8f5d-v8mzt   2/2     Running   0          41s
   "family": "pedidos",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "2048", "memory": "1024",
+  "cpu": "1024", "memory": "2048",
   "taskRoleArn": "arn:aws:iam::<conta>:role/pedidos-n3x-files",
   "volumes": [{ "name": "n3x-run" }, { "name": "n3x-tmp" }],
   "containerDefinitions": [
     {
-      "name": "n3x-files", "essential": false,
+      "name": "n3x-files", "essential": false, "memory": 256,
       "image": "public.ecr.aws/aws-cli/aws-cli:2.22.35@sha256:c3f1...",
       "entryPoint": ["sh", "-c"],
       "command": ["set -eu; umask 0227; aws secretsmanager get-secret-value --secret-id pedidos/n3x/aes-key --query SecretString --output text > /run/n3x/aes.key; aws ssm get-parameter --name /pedidos/n3x/n3x.yaml --query Parameter.Value --output text > /run/n3x/n3x.yaml; aws ssm get-parameter --name /n3x/ca.pem --query Parameter.Value --output text > /run/n3x/ca.pem; chown 17000:17000 /run/n3x/*; chmod 0440 /run/n3x/*"],
@@ -802,21 +854,22 @@ pedidos-6d9c7b8f5d-v8mzt   2/2     Running   0          41s
 - Assinatura/Rota: `deploy/istio/` com os nomes reservados `envoyfilter.yaml` (cópia), `kustomization.yaml`, `pedidos-deployment.yaml`, `mesh-config.yaml` e `README.md`; `docs/operador/istio.md`
 - Método: n/a
 - Semântica:
-  - **L-42 fechada (H-08):** o `EnvoyFilter` canônico fica em `n3x-sidecar/deploy/istio/envoyfilter.yaml`, gerado pela FDD 49 a partir do `HTTPFilter` do `core/envoycfg` (pedido da FDD 26), perto do código que ele precisa acompanhar; o `n3x-sdk/deploy/istio/envoyfilter.yaml` é cópia byte a byte na tag da imagem `istio-1.31` do par, registrada em `SOURCES.json` e conferida por `src_drift`, no mesmo padrão da cópia do catálogo da FDD 28. Assim o exemplo funciona sem rede e a origem continua única
+  - **L-42 fechada (hipótese H-08, depende da FDD 49):** o `EnvoyFilter` canônico fica em `n3x-sidecar/deploy/istio/envoyfilter.yaml`, gerado pela FDD 49 a partir do `HTTPFilter` do `core/envoycfg` (pedido da FDD 26), perto do código que ele precisa acompanhar; o `n3x-sdk/deploy/istio/envoyfilter.yaml` é cópia byte a byte na tag da imagem `istio-1.31` do par, registrada em `SOURCES.json` e conferida por `src_drift`, no mesmo padrão da cópia do catálogo da FDD 28. Assim o exemplo funciona sem rede e a origem continua única
   - **Reservado à FDD 49 (L-27):** troca da imagem injetada pela anotação `sidecar.istio.io/proxyImage`; rótulo `n3x.io/enabled`; montagem do `n3x.yaml` e da chave no contêiner do proxy (hipótese do HLD: `sidecar.istio.io/userVolume` e `userVolumeMount`, com o `subPath` e o `0440` deste guia); `meshConfig.pathNormalization` exigida (hipótese do HLD: `MERGE_SLASHES` ou mais restrita); métricas `n3x_` pelo merge do Istio na 15020 (hipótese: `proxyStatsMatcher.inclusionPrefixes: ["n3x_"]`); UID 1337; health e drenagem do Istio
-  - Até a FDD 49 ser gerada, `deploy/istio/README.md` só lista os itens acima, marcados como pendentes, e `docs/operador/istio.md` diz que o modo Istio não está pronto para uso; as regras de política do Istio entram no contrato 10 por adição
+  - **Estado interino, bloqueante para a v1.0.0 (confirmado):** até a FDD 49 ser gerada, `deploy/istio/README.md` só lista os itens acima, marcados como pendentes, e `docs/operador/istio.md` diz que o modo Istio não está pronto para uso. Esse texto é provisório: a v1.0.0 só sai com o conteúdo da FDD 49 no lugar dele e com o kind com Istio da FDD 48 passando. Se o alvo `istio-1.31` for adiado, a decisão é registrada no PRD (contingência do PRD) e só então o release pode sair sem o Istio. As regras de política do Istio entram no contrato 10 por adição
+  - As hipóteses específicas do Istio acima (`userVolume`, `MERGE_SLASHES`, `proxyStatsMatcher`) continuam "(hipótese)" e são da FDD 49
   - O `n3x.yaml` é o mesmo do contrato 3: no Istio, `listener` e `app` são ignorados com aviso (HLD do `n3x-sidecar`)
 
 **Exemplo de requisição** (`deploy/istio/README.md` enquanto reservado)
 ```text
-# Modo Istio (reservado à FDD 49)
+# Modo Istio (reservado à FDD 49; interino, o release v1.0.0 só sai com este texto substituído)
 Pendente: envoyfilter.yaml (cópia de n3x-sidecar/deploy/istio na tag istio-1.31 do par), anotações de imagem e de volume,
 pathNormalization, proxyStatsMatcher, kustomization.yaml e pedidos-deployment.yaml.
 ```
 
 **Exemplo de resposta** (`deploytool check --only sources` antes da FDD 49)
 ```text
-ok: 4 cópias conferidas (2 Dockerfiles, regras e testes do core); istio/envoyfilter.yaml reservado, ausente (aceito até a FDD 49)
+ok: 4 cópias conferidas (2 Dockerfiles, regras e testes do core); istio/envoyfilter.yaml reservado, ausente (aceito em PR; reprova o release v1.0.0, seção 9)
 ```
 
 ---
@@ -842,7 +895,7 @@ ok: 4 cópias conferidas (2 Dockerfiles, regras e testes do core); istio/envoyfi
 | `k8s_probes` | Kubernetes | `readinessProbe` `/ready`, `livenessProbe` `/live`, `startupProbe` `/live` ou ausente, todos na 17021; nunca `/ready` no `startupProbe` |
 | `k8s_memory_limit` | Kubernetes | `limits.memory` no sidecar e no controller |
 | `k8s_cpu_limit` (aviso) | Kubernetes | `limits.cpu` no sidecar (sem ele, a CPU fica em 2 com aviso `cpu_unlimited`, FDD 27) |
-| `k8s_non_root` | Kubernetes | `runAsNonRoot: true` no pod; `runAsUser` 17000 ou ausente nos contêineres N3X |
+| `k8s_non_root` | Kubernetes | `runAsNonRoot: true` no pod; `runAsUser` 17000 ou ausente nos contêineres N3X (o pod não fixa `runAsUser`); `runAsUser` nunca 0 em nenhum contêiner, e a aplicação mantém o UID dela |
 | `k8s_readonly_rootfs` | Kubernetes | `readOnlyRootFilesystem: true` nos contêineres N3X |
 | `k8s_no_escalation` | Kubernetes | `allowPrivilegeEscalation: false` |
 | `k8s_drop_all` | Kubernetes | `capabilities.drop` contém `ALL` e `add` vazio |
@@ -865,7 +918,7 @@ ok: 4 cópias conferidas (2 Dockerfiles, regras e testes do core); istio/envoyfi
 | `compose_healthcheck` | compose | sidecar com `probe live`; controller com `probe ready` ou `probe live` |
 | `compose_stop_grace` | compose | `stop_grace_period` pela mesma fórmula da `k8s_grace_period` |
 | `compose_mem_limit` | compose | `mem_limit` (ou `deploy.resources.limits.memory`) no sidecar e no controller |
-| `compose_hardening` | compose | `read_only: true`, `cap_drop: [ALL]` e `no-new-privileges:true` nos serviços N3X |
+| `compose_hardening` | compose | `read_only: true`, `cap_drop: [ALL]` e `no-new-privileges:true` nos serviços N3X; chave AES e `tls.key` só em volume nomeado montado `:ro`, nunca em bind do host; `n3x-files` com `restart: "no"`, sem `cap_add` além de `CHOWN` e `FOWNER`, e os serviços N3X com `depends_on` dele em `service_completed_successfully` |
 | `compose_tmpfs` | compose | sidecar com `tmpfs` em `/tmp` |
 | `compose_no_swap` | compose | `memswap_limit` igual a `mem_limit` |
 | `compose_no_core` | compose | `ulimits.core: 0` nos serviços N3X |
@@ -883,7 +936,7 @@ ok: 4 cópias conferidas (2 Dockerfiles, regras e testes do core); istio/envoyfi
 | `ecs_private_volumes` | ECS | `n3x-run` e `n3x-tmp` não montados na aplicação |
 | `ecs_init` | ECS | `n3x-files` com `essential: false` e imagem por digest |
 | `cfg_paths` | config | modelos com `ca_file`, `aes_file`, `tls.*` em `/run/n3x/` e marcadores do contrato 3 |
-| `cfg_same_file` | config | compose, overlays e ECS montam o mesmo arquivo de saída do `bootstrap.sh` (mesmo nome de origem) |
+| `cfg_same_file` | config | compose, overlays e ECS usam o mesmo `sidecar.yaml` de saída do `bootstrap.sh` (mesmo nome de origem); as chaves não são arquivo do host, vêm do volume do `n3x-files` (compose), de `Secret` (Kubernetes) ou do Secrets Manager (ECS) |
 | `cfg_controller_address` | config | `controller.address` do modelo coberto pelos `--controller-name` do `bootstrap.sh` |
 | `obs_rules` | observabilidade | `promtool check rules` e `promtool test rules` sem erro; cada alerta AS e AC com ao menos um caso que dispara e um que não dispara |
 | `obs_runbook` | observabilidade | anotação `runbook` de todo alerta aponta para um título `### <ID>` de `docs/operador/alertas.md`, e todo título tem alerta |
@@ -918,8 +971,8 @@ erro: 2 problemas em 1 overlay (kubernetes); 0 avisos
   - **`honor_labels: true` nos dois jobs:** as métricas N3X têm o rótulo `instance` da instância de plugin (ADR-022); sem `honor_labels`, o Prometheus o renomeia para `exported_instance`. Com `honor_labels`, o `instance` do alvo some dessas séries, então todo job acrescenta `pod` (e `namespace` no Kubernetes) por relabel, e as regras de sidecar agregam por `pod` (FDD 45)
   - **Kubernetes:** descoberta de pods, mantendo o contêiner com a porta `n3x-metrics` (sidecar) ou a porta `ops` de pods com `app.kubernetes.io/name: n3x-controller`; com o operador, `PodMonitor` com `honorLabels: true` (o operador já põe `pod` e `namespace`)
   - **Compose:** alvos estáticos `pedidos-n3x:17090` com `pod: pedidos-n3x` e `n3x-controller:17091` com `pod: n3x-controller`; perfil `observabilidade` (`docker compose --profile observabilidade up -d`), fora do caminho dos 5 minutos
-  - **ECS:** o Prometheus não tem descoberta de ECS; o guia mostra o coletor do operador (por exemplo ADOT) com os mesmos `job`, `honor_labels` e `pod` igual ao ID da task (hipótese, sem arquivo de exemplo além do trecho no guia)
-  - **Intervalo:** 15 s com prazo de 5 s (hipótese); a FDD 51 mede o scrape do controller (meta G15, p99 até 20 ms)
+  - **ECS:** o Prometheus não tem descoberta de ECS; o guia mostra o coletor do operador (por exemplo ADOT) com os mesmos `job`, `honor_labels` e `pod` igual ao ID da task (confirmado: só o trecho no guia, sem arquivo de exemplo)
+  - **Intervalo:** 15 s com prazo de 5 s (confirmado); a FDD 51 mede o scrape do controller (meta G15, p99 até 20 ms)
   - **Representação (FDD 16):** no sidecar, histogram sai só com `_bucket` e `_count`, sem `_sum`; counter é inteiro truncado e gauge é inteiro arredondado; médias saem dos buckets. No controller, com `_sum` normal
   - **Prefixo `envoy_` (contingência da FDD 16):** se o spike mostrar as stats do módulo com prefixo, o job do sidecar recebe `metric_relabel_configs` que tira o prefixo de `envoy_n3x_.*`; o trecho fica comentado no arquivo até lá
   - **Regras e painéis** usam só os nomes de `series.txt`; a FDD 48 confere que cada nome aparece num scrape real ou está marcado como condicional (pedido à FDD 48)
@@ -972,8 +1025,8 @@ up{job="n3x-sidecar",namespace="pedidos",pod="pedidos-6d9c7b8f5d-2xkqp",instance
   ```
 - Método: processo; o Prometheus do operador carrega os arquivos de regras, ou o prometheus-operator carrega os `PrometheusRule`
 - Semântica:
-  - Rótulos de todo alerta: `severity` (`critical`, `warning`, `info`), `component` (`core`, `sidecar` ou `controller`) e `n3x_alert` (o ID); anotações `summary` (pt-BR, sem valor de config nem segredo) e `runbook` = `https://github.com/giustech/n3x-sdk/blob/main/docs/operador/alertas.md#<id em minúsculas>` (por exemplo `#as-12`); as regras do core já trazem essa URL (pedido à FDD 45 para confirmar o formato)
-  - **`params.yaml` (H-14):** `session_ttl_seconds` (3600), `drain_timeout_seconds` (20), `grpc_max_connections` (1000), `expected_plugins_hash` (vazio desliga o AC-04), `exclude` (lista de IDs a omitir, por exemplo os do `n3x.example`); o `rules` só substitui marcadores `{{ .param }}` nas regras da plataforma; as regras do core são copiadas sem mudança (o A-26 usa 3960, valor de `session.ttl` padrão; o guia manda ajustar se o TTL mudar)
+  - Rótulos de todo alerta: `severity` (`critical`, `warning`, `info`), `component` (`core`, `sidecar` ou `controller`) e `n3x_alert` (o ID); anotações `summary` (pt-BR, sem valor de config nem segredo) e `runbook` = `https://github.com/giustech/n3x-sdk/blob/<tag>/docs/operador/alertas.md#<id em minúsculas>` (por exemplo `v1.0.0` e `#as-12`). A URL aponta para a **tag** da versão, e não para a `main`, porque o guia da tag vale para aquela versão (contrato 15); o `render` troca `<tag>` pela tag do release do `n3x-sdk` (`sdk_tag` em `params.yaml`; entre releases, a última tag). As regras do core trazem a URL no formato da FDD 45 e são copiadas sem mudança: pedido à FDD 45 para usar o mesmo modelo com `<tag>`; até lá, o link das regras do core pode apontar para a `main`
+  - **`params.yaml` (confirmado):** `sdk_tag` (tag do `n3x-sdk` no `runbook`), `session_ttl_seconds` (3600), `drain_timeout_seconds` (20), `grpc_max_connections` (1000), `expected_plugins_hash` (vazio desliga o AC-04), `exclude` (lista de IDs a omitir, por exemplo os do `n3x.example`); o `rules` só substitui marcadores `{{ .param }}` nas regras da plataforma; as regras do core são copiadas sem mudança (o A-26 usa 3960, valor de `session.ttl` padrão; o guia manda ajustar se o TTL mudar)
   - O `PrometheusRule` é o arquivo de regras dentro de `spec.groups`, com `metadata.labels` `app.kubernetes.io/part-of: n3x` e `role: alert-rules`; validado pelo `kubeconform` com o esquema do CRD vendorizado
   - Alertas por log (AL-01 a AL-14) não têm regra Prometheus: são consultas sobre os campos JSON (`msg`, `code`, `reason`, `rule`), escritas no guia sem amarrar a um coletor
   - Severidade: crítico pede ação imediata (segurança, perda de tráfego ou de dados); aviso, ação no dia; info, tendência (FDD 45)
@@ -1016,7 +1069,7 @@ Alertas de sidecar (job `n3x-sidecar`, agregados por `namespace` e `pod`):
 | AS-32 | SidecarCoreEventsDropped | `rate(n3x_sidecar_events_dropped_total[5m]) > 0` | | aviso | FDD 17 |
 | AS-33 | SidecarChainStateLeak | `n3x_sidecar_chain_inflight > 0 and on (namespace, pod) sum by (namespace, pod) (rate(n3x_sidecar_entries_total{event="filter_new"}[10m])) == 0` | 10m | aviso | FDD 17 |
 | AS-34 | ExampleReportsFailing | `rate(n3x_n3x_example_reports_sent_total{result="error"}[5m]) > 0` | 15m | info | FDD 13 (só com o `n3x.example`) |
-| AS-35 | SidecarCrossingsHigh | `sum by (namespace, pod) (rate(n3x_sidecar_entries_total{kind="chain"}[15m])) / sum by (namespace, pod) (rate(n3x_sidecar_entries_total{event="filter_new"}[15m])) > 5` | 15m | info | FDD 16 (valores de rótulo hipótese) |
+| AS-35 | SidecarCrossingsHigh | `sum by (namespace, pod) (rate(n3x_sidecar_entries_total{kind="chain"}[15m])) / sum by (namespace, pod) (rate(n3x_sidecar_entries_total{event="filter_new"}[15m])) > 5` | 15m | info | FDD 16 (valores de rótulo confirmados) |
 
 Alertas de controller (job `n3x-controller`; os do core, A-01 a A-43, vêm da FDD 45 e não se repetem):
 
@@ -1086,7 +1139,7 @@ groups:
         labels: { severity: critical, component: sidecar, n3x_alert: AS-12 }
         annotations:
           summary: "Sidecar {{ $labels.pod }} não fecha TLS com o controller (CA, SAN ou certificado)"
-          runbook: "https://github.com/giustech/n3x-sdk/blob/main/docs/operador/alertas.md#as-12"
+          runbook: "https://github.com/giustech/n3x-sdk/blob/v1.0.0/docs/operador/alertas.md#as-12"
 ```
 ```yaml
 tests:
@@ -1113,7 +1166,7 @@ ok: 3 PrometheusRule (core 43 alertas e 4 gravações, sidecar 35, controller 33
 ---
 
 **Contrato 13: painéis de referência (Grafana) e consultas no guia**
-- Tipo: arquivos JSON de dashboard do Grafana 10.4 ou superior (H-15) e lista de consultas em `docs/operador/observabilidade.md`
+- Tipo: arquivos JSON de dashboard do Grafana 10.4 ou superior (confirmado) e lista de consultas em `docs/operador/observabilidade.md`
 - Assinatura/Rota: `deploy/observability/grafana/pr-NN-<nome>.json`; variáveis `datasource`, `namespace`, `pod` e `plugin`
 - Método: importação no Grafana do operador (ou provisionamento no perfil `observabilidade` do compose)
 - Semântica:
@@ -1164,13 +1217,13 @@ ok: 12 painéis, 141 consultas válidas no promtool, 0 séries fora de series.tx
   ```
 - Método: processo; `import` lê o envelope `format: 1` das FDDs 50 e 51 (`recommendations[]`, metas G01 a G17) e grava só os valores e a origem em `sizing.json`
 - Semântica:
-  - Até os relatórios existirem, a tabela mostra os valores de hipótese abaixo, com a coluna "Origem" dizendo de onde vêm; cada `import` troca a linha e a origem passa a ser o relatório e a data (pedido da FDD 51 e da FDD 45 para ajustar limiares)
+  - Até os relatórios existirem, a tabela mostra os valores iniciais abaixo (confirmados como padrão), com a coluna "Origem" dizendo de onde vêm; cada `import` troca a linha e a origem passa a ser o relatório e a data (pedido da FDD 51 e da FDD 45 para ajustar limiares)
   - O guia explica ao lado: `GOMEMLIMIT` calculado (45% no sidecar, 80% no controller), nunca por variável; `resources.memory` e `resources.cpus` do `n3x.yaml` só para ajustar abaixo do cgroup; a memória total do core no controller é `n3x_n3x_core_memory_bytes` mais `n3x_plugin_memory_bytes{plugin="n3x.core"}` mais o resto do processo (o Store não entra na cota do SDK, FDD 41); a soma das cotas de plugin acima de 50% do `GOMEMLIMIT` gera `memory_quota_budget` (FDD 27) e `plugin_quota_high` (FDD 30); o `tmpfs` do `/tmp` conta no limite do contêiner
   - Pedido da FDD 51 ao operador: informar o `n3x_n3x_core_effective_config_bytes` e o tamanho do manifesto quando abrir issue de desempenho, para um perfil novo de carga
 
 | Item | Valor inicial | Origem | Observação |
 | --- | --- | --- | --- |
-| Sidecar por pod | 1 vCPU (`limits.cpu`) e 256 MiB (`limits.memory`) | L-31, hipótese até a FDD 50 | `GOMEMLIMIT` 115 MiB; abaixo de 128 MiB não sobe; de 128 a 256 MiB, aviso |
+| Sidecar por pod | 1 vCPU (`limits.cpu`) e 256 MiB (`limits.memory`) | L-31 (confirmado), valor até a FDD 50 | `GOMEMLIMIT` 115 MiB; abaixo de 128 MiB não sobe; de 128 a 256 MiB, aviso |
 | Controller com 500 sidecars | 1 vCPU e 512 MiB | HLD; metas G01 e G02 da FDD 51 | regra R7 da FDD 51 pode recomendar 1 GB ou 2 vCPUs |
 | Teto do Store do core | `memory_limit` 128MiB | FDD 36 | degradado acima do teto; uso no painel PR-03 |
 | Serviços sem `session.hmac_key` por vCPU | cerca de 100 (estimativa) | I-09 da FDD 31; valor final pela regra R3 da FDD 51 | recomendação: `hmac_key` sempre em produção |
@@ -1185,7 +1238,7 @@ ok: 12 painéis, 141 consultas válidas no promtool, 0 séries fora de series.tx
 {
   "format": 1,
   "rows": [
-    { "id": "sidecar", "cpu": "1", "memory": "256Mi", "source": "hipótese L-31 (FDD 27)", "report": null },
+    { "id": "sidecar", "cpu": "1", "memory": "256Mi", "source": "valor inicial L-31 (FDD 27)", "report": null },
     { "id": "controller_500", "cpu": "1", "memory": "512Mi", "source": "HLD de plataforma", "report": null },
     { "id": "services_without_hmac_per_vcpu", "value": "100", "source": "estimativa I-09 (FDD 31)", "report": null }
   ]
@@ -1203,7 +1256,7 @@ sizing.json atualizado; rode deploytool render
 ---
 
 **Contrato 15: guia do operador (`docs/operador/`)**
-- Tipo: documentação em Markdown no repositório, lida no GitHub (H-16)
+- Tipo: documentação em Markdown no repositório, lida no GitHub (confirmado)
 - Assinatura/Rota: arquivos e conteúdo obrigatório abaixo
 - Método: n/a
 - Semântica:
@@ -1217,7 +1270,7 @@ sizing.json atualizado; rode deploytool render
 | `conceitos.md` | sidecar e controller, `n3x.yaml` do serviço e do controller, caminhos `/etc/n3x` e `/run/n3x`, identidade da instância por orquestrador (FDD 25), standalone, o que acontece quando o controller cai |
 | `imagens-e-build.md` | Dockerfiles do contrato 5, `add` e `build`, `GOPRIVATE` e `git_auth` com token só de leitura, tabela de pares e regra de compatibilidade (mesma major, minor da runtime igual ou maior; série 0 com minor igual), mensagem de incompatibilidade, espelho por digest e limites do GHCR, política `candidate` e `-rc` (nunca em produção), `jq` no manifesto, depuração com `--target build`, exit codes do builder (1 ambiente ou ferramenta, 2 acesso ou rede, 3 a 7 plugin ou combinação; 5 com `N3X-B010` `toolchain` ou `timeout` é o runner; 6 com `N3X-B011` ou `N3X-B012` é a imagem; `load_test_skipped` e runner arm64 nativo) |
 | `configuracao.md` | referência mínima do `n3x.yaml` com link para `docs/n3x-yaml.md` dos repositórios donos; aspas; `drain_timeout`; `app.health`; streams gRPC com deadline e mensagem a cada 5 min (`idle_below_request`); `heartbeat_interval`; `max_tasks` do core; validação completa na imagem final na CI do serviço |
-| `segredos.md` | chave AES (`n3x keygen`), cifrar uma vez e versionar o envelope (nunca recifrar por pod ou deploy, senão vira "troca de segredo ou recifragem" no painel), `credential new --key` (nunca segredo à mão), `hash --cost` igual para todos, `ENC[...]` opcional no `password_hash`, `hmac_key` por `keygen` mais `encrypt --plugin n3x.core`, trecho com `ENC[...]` baixado do painel, rotação da chave AES, da credencial (um hash por serviço: troca, restart do controller, redeploy), da `hmac_key` (sessões caem, novo login com jitter) e da CA (bundle com a antiga e a nova); o caminho de um segredo em claro no painel não é segredo (H-24) |
+| `segredos.md` | chave AES (`n3x keygen`), cifrar uma vez e versionar o envelope (nunca recifrar por pod ou deploy, senão vira "troca de segredo ou recifragem" no painel), `credential new --key` (nunca segredo à mão), `hash --cost` igual para todos, `ENC[...]` opcional no `password_hash`, `hmac_key` por `keygen` mais `encrypt --plugin n3x.core`, trecho com `ENC[...]` baixado do painel, rotação da chave AES, da credencial (um hash por serviço: troca, restart do controller, redeploy), da `hmac_key` (sessões caem, novo login com jitter) e da CA (bundle com a antiga e a nova); o caminho de um segredo em claro no painel não é segredo (confirmado); a chave AES do compose e do kind fica em volume nomeado e é lida com `docker run --rm -v <volume>:/k busybox cat /k/<arquivo>` ou `docker cp`, e a alternativa de pasta do host (`--user 0`, `chown`, `chmod`, com a ressalva do Docker Desktop) |
 | `docker-compose.md` | contrato 6 linha a linha; permissões dos arquivos no host; `user:`; `stop_grace_period`; o perfil `observabilidade` |
 | `kubernetes.md` | contrato 7 linha a linha; criação dos `ConfigMap` e `Secret`; `subPath` não recebe atualização (mudança de config é rollout); `spec.hostname`; gatilho e `preStop`; prazos; `NetworkPolicy`; recursos |
 | `ecs.md` | contrato 8; papel e política IAM; Secrets Manager e Parameter Store; ALB; Cloud Map; Fargate e EC2; variáveis que o agente injeta e que a task nunca define |
@@ -1294,14 +1347,14 @@ pronto: 41 arquivos; próximos passos em README.md
 - Assinatura/Rota: `servico-novo-30min.md`, `ecs.md`, `plugin-novo.md` e `registro.md` (uma linha por execução)
 - Método: execução humana antes de cada release estável do `n3x-sdk` que mude `deploy/` ou `docs/`, e pelo menos uma vez antes da v1.0.0
 - Semântica:
-  - **Cronometragem dos 30 minutos (H-17):** começa quando a pessoa abre `docs/operador/inicio-rapido.md` numa máquina com Docker 24 ou superior, rede e o repositório clonado, sem imagens N3X baixadas; termina quando a linha do sidecar `pedidos` aparece em `connected`, com o hash da config, na tela `/plugins/n3x/core/sidecars`, e `curl -si localhost:17000/eco` mostra `x-n3x: 1`. Conta tudo (leitura, downloads, build); pausas da pessoa não contam. Passa com até 1.800 s. De preferência, quem roda não escreveu o guia
-  - **ECS:** checklist de 12 itens: task `RUNNING`; `n3x-files` com saída 0; sidecar `HEALTHY`; alvo do ALB `healthy`; `GET /eco` pelo ALB com `x-n3x: 1`; `GET /admin` com 403; sidecar no painel com a instância igual ao `DockerId`; `container_environment` com `rootfs_readonly: true` e `cap_eff` zero; nenhum `key_too_open`; o canário de segredo ausente no CloudWatch; parada da task com um laço de requisições pelo ALB sem 5xx; mesmo SHA-256 do `n3x.yaml` usado no compose
+  - **Cronometragem dos 30 minutos (confirmado):** começa quando a pessoa abre `docs/operador/inicio-rapido.md` numa máquina Linux ou macOS com Docker 24 ou superior, rede e o repositório clonado, sem imagens N3X baixadas (Windows vale via WSL2 com Docker Desktop, onde o `bootstrap.sh` roda; o volume nomeado dispensa permissão de arquivo do host; Windows nativo sem WSL2 não é coberto e fica como pendência do guia); termina quando a linha do sidecar `pedidos` aparece em `connected`, com o hash da config, na tela `/plugins/n3x/core/sidecars`, e `curl -si localhost:17000/eco` mostra `x-n3x: 1`. O passo de abrir o painel inclui ler a senha do root do volume e aceitar o aviso do certificado `dev-cert` autoassinado. Conta tudo (leitura, downloads, build); pausas da pessoa não contam. Passa com até 1.800 s. De preferência, quem roda não escreveu o guia
+  - **ECS:** checklist de 12 itens: task `RUNNING`; `n3x-files` com saída 0; sidecar `HEALTHY`; alvo do ALB `healthy`; `GET /eco` pelo ALB com `x-n3x: 1`; `GET /admin` com 403 e o corpo JSON `{"code":403,"message":"bloqueado"}`; sidecar no painel com a instância igual ao `DockerId`; `container_environment` com `rootfs_readonly: true` e `cap_eff` zero; nenhum `key_too_open`; o canário de segredo ausente no CloudWatch; parada da task com um laço de requisições pelo ALB sem 5xx; mesmo SHA-256 do `n3x.yaml` usado no compose
   - **Plugin novo:** a partir do `docs/autor/README.md`, `giustech.ratelimit` gerado pelo `n3x-new`, publicado com tag, adicionado aos dois Dockerfiles e configurado; passa quando a página do plugin abre e o cartão aparece na visão geral, sem PR em nenhum repositório N3X
   - **`registro.md`:** data, roteiro, versão do `n3x-sdk`, pares de imagem, quem rodou, tempo total, resultado e link de issue para cada desvio; um roteiro que falha bloqueia o release até a correção do guia ou do exemplo
 
 **Exemplo de requisição** (linha nova de `registro.md`)
 ```text
-| 2026-11-03 | servico-novo-30min | n3x-sdk 1.0.0-rc.2 | sidecar 1.0.4-envoy-1.40, controller 1.0.2 | (nome) | 1.412 s | passou | #88 (passo 3 sem dica de chown) |
+| 2026-11-03 | servico-novo-30min | n3x-sdk 1.0.0-rc.2 | sidecar 1.0.4-envoy-1.40, controller 1.0.2 | (nome) | 1.412 s | passou | #88 (passo 6 sem dica de como ler a senha do root no volume) |
 ```
 
 **Exemplo de resposta** (`deploytool check --only docs`, conferência do registro)
@@ -1316,7 +1369,7 @@ ok: registro.md com as 3 execuções exigidas para a tag 1.0.0 (último resultad
 - Assinatura/Rota: `.github/workflows/deploy.yml` com os jobs `static`, `config`, `links` (noturno) e `sync` (diário)
 - Método: `pull_request` e `push` em `main` com mudança em `deploy/**`, `docs/**` ou no próprio workflow; `schedule`; `workflow_dispatch`; `repository_dispatch` `runtime-published` (se a FDD 46 enviar ao `n3x-sdk`)
 - Semântica:
-  - **`static`** (todo PR, até 5 min, hipótese): `go test ./deploy/tools/...`; `deploytool check` inteiro, com `kustomize build`, `kubeconform` (versões fixadas em `deploy/tools/tools.lock`: kubeconform 0.6.x, kustomize 5.x, promtool 2.53.x, H-21), `docker compose config`, `promtool check rules` e `promtool test rules`; sem rede além do proxy de módulos Go
+  - **`static`** (todo PR, até 5 min, confirmado): `go test ./deploy/tools/...`; `deploytool check` inteiro, com `kustomize build`, `kubeconform` (versões fixadas em `deploy/tools/tools.lock`: kubeconform 0.6.x, kustomize 5.x, promtool 2.53.x, confirmado), `docker compose config`, `promtool check rules` e `promtool test rules`; sem rede além do proxy de módulos Go
   - **`config`** (todo PR que muda `deploy/config`, `deploy/images` ou `versions.json`; noturno): `docker compose build`, `bootstrap.sh --out` numa pasta temporária, `n3x validate` completo (com `.so` e chave) no sidecar e `n3x-controller validate` completo no controller, dentro das imagens construídas; confere o SHA-256 do `n3x.yaml` gerado e publica a pasta (sem as chaves) como artefato para a FDD 48
   - **`links`** (noturno): links externos com `lychee` fixado; falha abre issue, não bloqueia PR; `deploytool check --remote` (deriva contra a origem)
   - **`sync`** (diário): `deploytool sync --write` e PR do bot (contrato 2)
@@ -1352,7 +1405,7 @@ layout ok | kubernetes ok (2 overlays x 2 versões) | compose ok | ecs ok | conf
 
 | Condição | Onde aparece | Tratamento | Observações |
 | --- | --- | --- | --- |
-| Chave ou CA sem leitura para o UID 17000 (arquivo do host com 0400 de outro dono) | subida do sidecar ou do controller: saída 3 `key_read` ou 2 `file_read`, texto com UID e GID (FDDs 15 e 28) | guia: `chown 17000:17000` e `chmod 0440`, `fsGroup: 17000` com `defaultMode: 0440`, `chown` no `n3x-files` do ECS; contingência `user: "17000:<gid>"` no compose | `bootstrap.sh` já grava com dono e modo certos quando pode |
+| Chave ou CA sem leitura para o UID 17000 | subida do sidecar ou do controller: saída 3 `key_read` ou 2 `file_read`, texto com UID e GID (FDDs 15 e 28); no compose, o `n3x-files` sai diferente de 0 e o sidecar nem inicia | compose e kind: o serviço `n3x-files` (root) aplica dono 17000:17000 e modo 0440 ao volume nomeado; Kubernetes: `fsGroup: 17000` com `defaultMode: 0440`; ECS: `chown` no `n3x-files`; alternativa de pasta do host no guia: contêiner `--user 0` com `chown` e `chmod` (no Docker Desktop a permissão do bind é emulada); contingência `user: "17000:<gid>"` no compose | o `bootstrap.sh` não grava chave no host; o volume funciona igual em Linux, macOS e Windows |
 | `ConfigMap` ou volume montado como diretório em `/etc/n3x` | saída 5 `image_target` (FDD 25) | regra `k8s_config_subpath` recusa na CI; o ECS usa `--config /run/n3x/n3x.yaml` | o texto do erro sugere `subPath` (FDD 28) |
 | Contêiner sem limite de memória | saída 7 `memory_unlimited` (FDD 27) | regras `k8s_memory_limit`, `compose_mem_limit`, `ecs_memory` | no ECS, `memory` do contêiner, não só da task |
 | `/tmp` sem escrita ou compartilhado com a aplicação | saída 6 `write` (FDD 26) ou risco de a aplicação alcançar o socket do admin | regras `k8s_tmp_memory`, `k8s_private_volumes`, `compose_tmpfs`, `ecs_private_volumes` | no Fargate, aviso `tmp_not_tmpfs` esperado |
@@ -1374,7 +1427,7 @@ layout ok | kubernetes ok (2 overlays x 2 versões) | compose ok | ecs ok | conf
 
 **Estratégias de resiliência:** não há tráfego de produção nesta FDD. A resiliência está em validar tudo antes do merge (regras do contrato 10, `n3x validate` completo), em copiar só de tags com SHA-256 registrado, na escrita atômica do `sync` e do `bootstrap.sh`, e em prazos de parada calculados pela mesma fórmula nos três orquestradores. As ferramentas externas são fixadas por versão e hash; o `sync` tenta de novo no dia seguinte, sem backoff dentro do job.
 
-**Política de fallback:** nenhum exemplo cai para um padrão inseguro. Sem par `ok` novo, `versions.json` fica no par anterior. Sem o relatório das FDDs 50 e 51, a tabela de dimensionamento fica com os valores de hipótese e a origem dita. Sem a FDD 49, o Istio fica marcado como não pronto. Sem `curl` na imagem da aplicação, o guia aceita o risco residual em vez de propor um contêiner extra.
+**Política de fallback:** nenhum exemplo cai para um padrão inseguro. Sem par `ok` novo, `versions.json` fica no par anterior. Sem o relatório das FDDs 50 e 51, a tabela de dimensionamento fica com os valores iniciais e a origem dita. Sem a FDD 49, o Istio fica marcado como não pronto, estado interino que bloqueia o release da v1.0.0. Sem `curl` na imagem da aplicação, o guia aceita o risco residual em vez de propor um contêiner extra.
 
 **Invariantes**
 - Nenhum arquivo versionado em `deploy/` ou `docs/` contém chave, segredo em claro, envelope `ENC[...]` real, hash bcrypt real ou certificado privado
@@ -1414,17 +1467,17 @@ layout ok | kubernetes ok (2 overlays x 2 versões) | compose ok | ecs ok | conf
 | --- | --- | --- |
 | Kubernetes | 1.29 | sidecar nativo (ADR-007); `kubeconform` confere `kubernetes.min` e `kubernetes.latest` de `versions.json` |
 | kubectl e kustomize | kubectl 1.29 (kustomize 5.x embutido) | `kubectl apply -k`; na CI, `kustomize` fixado em `tools.lock` |
-| kubeconform | 0.6.x (hipótese) | com esquemas de CRD vendorizados (`PodMonitor`, `ServiceMonitor`, `PrometheusRule`, `Certificate`) |
-| Docker Engine e Docker Compose | Engine 24 e Compose v2.20 (hipótese) | BuildKit, `--wait`, `network_mode: service:` |
-| Prometheus e promtool | 2.53 LTS (hipótese) | regras válidas também no 3.x; `promtool` 2.53.x na CI |
+| kubeconform | 0.6.x (confirmado) | com esquemas de CRD vendorizados (`PodMonitor`, `ServiceMonitor`, `PrometheusRule`, `Certificate`) |
+| Docker Engine e Docker Compose | Engine 24 e Compose v2.20 (confirmado) | BuildKit, `--wait`, `network_mode: service:` |
+| Prometheus e promtool | 2.53 LTS (confirmado) | regras válidas também no 3.x; `promtool` 2.53.x na CI |
 | prometheus-operator | CRDs `monitoring.coreos.com/v1` | opcional; sem ele, os arquivos de regras e `scrape-kubernetes.yaml` |
-| Grafana | 10.4 (hipótese) | `schemaVersion` 39 |
+| Grafana | 10.4 (confirmado) | `schemaVersion` 39 |
 | ECS | Fargate 1.4.0 ou EC2 com o agente com metadata v4 | Secrets Manager, Parameter Store, Cloud Map, ALB |
 | AWS CLI (imagem do `n3x-files`) | 2.x por digest | só no contêiner de preparo |
 | Imagens N3X | as de `versions.json` | pares `ok` de `n3x-builder/compat/pairs.json` (FDD 46) |
 | `n3x-builder/examples/` | tag do par | copiados byte a byte; estágio `out` pedido à FDD 46 |
 | `n3x-plugin-core/docs/alertas/` | tag do core embutido | cópia das regras e testes (FDD 45) |
-| `n3x-sidecar/deploy/istio/` | tag `istio-1.31` do par | cópia do `EnvoyFilter` depois da FDD 49 |
+| `n3x-sidecar/deploy/istio/` | tag `istio-1.31` do par | cópia do `EnvoyFilter` depois da FDD 49 (obrigatória para a v1.0.0) |
 | Go | 1.26 | `deploy/tools` e a aplicação `eco` |
 | lychee | fixado em `tools.lock` | só no job noturno de links |
 
@@ -1451,7 +1504,9 @@ layout ok | kubernetes ok (2 overlays x 2 versões) | compose ok | ecs ok | conf
 - **Guias:** 0 ocorrências de U+2014 e U+2013 em `docs/` e `deploy/`; 0 link relativo quebrado e 0 âncora inexistente; 126 títulos de alerta em `alertas.md`, um por alerta, conferidos pela `obs_runbook`; todo pedido R-01 a R-60 da seção 1 tem o conteúdo no arquivo indicado (revisão com a tabela como checklist)
 - **Versões:** `deploytool render --check` sem diferença; nenhuma imagem sem digest; `versions.json` sem pré-release e sem alvo `candidate`; o PR do bot sai em até 2 dias úteis depois de um par `ok` novo (medido nos primeiros 3 releases)
 - **Roteiros:** antes da v1.0.0, `registro.md` tem uma execução que passou de cada roteiro: serviço novo em até 1.800 s, ECS com os 12 itens do checklist e plugin novo com página e cartão, sem PR em repositório N3X
-- **Tempo de CI:** job `static` em até 5 min e job `config` em até 12 min no `ubuntu-24.04` (hipótese)
+- **Tempo de CI:** job `static` em até 5 min e job `config` em até 12 min no `ubuntu-24.04` (confirmado)
+- **Istio (bloqueia a v1.0.0):** o release da v1.0.0 não sai com `deploy/istio/README.md` e `docs/operador/istio.md` no estado interino "não pronto para uso"; exige o conteúdo da FDD 49 (`envoyfilter.yaml` copiado e conferido por `src_drift`, kustomization, anotações, `pathNormalization` e métricas) e o kind com Istio da FDD 48 passando. Se o alvo `istio-1.31` for adiado, a decisão fica registrada no PRD (contingência do PRD) antes do release
+- **Chave no host:** `bootstrap.sh` não deixa nenhuma chave AES, `tls.key` nem senha em claro em `.n3x/`; as chaves estão em volumes nomeados com dono 17000:17000 e modo 0440, o `n3x-files` do compose sai com 0 e os serviços N3X o têm como `service_completed_successfully`
 - **Entregues à FDD 48:** os arquivos listados no contrato 18 existem e o artefato do job `config` (sem chaves) é publicado em todo PR que o roda
 
 ---
@@ -1482,31 +1537,32 @@ layout ok | kubernetes ok (2 overlays x 2 versões) | compose ok | ecs ok | conf
 ### Suporte ao Istio frágil e dependência circular com a FDD 49
 
 - **Probabilidade:** alta
-- **Impacto:** a seção Istio fica vazia até a FDD 49; um patch do Istio pode ignorar o `EnvoyFilter` ou as anotações
+- **Impacto:** a seção Istio fica vazia até a FDD 49 e **bloqueia o release da v1.0.0**; um patch do Istio pode ignorar o `EnvoyFilter` ou as anotações
 - **Mitigação:**
     - Seção reservada com nomes de arquivo fixos e a regra de cópia já definida (L-42)
-    - O guia diz explicitamente que o modo Istio não está pronto até a FDD 49
+    - O guia diz explicitamente, de forma interina, que o modo Istio não está pronto até a FDD 49; a v1.0.0 só sai com o conteúdo da FDD 49 no lugar desse texto
     - CI por patch do Istio no builder (FDD 46) e kind com Istio na FDD 48
-- **Plano de contingência:** adiar o alvo `istio-1.31` (contingência do PRD) e manter o `envoy-1.40` como caminho suportado
+- **Plano de contingência:** adiar o alvo `istio-1.31` e manter o `envoy-1.40` como caminho suportado; é decisão registrada no PRD (contingência do PRD), e só com esse registro o release da v1.0.0 pode sair sem o Istio
 
 ### Montagem errada da chave ou da CA no ECS só aparece no teste manual
 
 - **Probabilidade:** média
-- **Impacto:** a task não sobe ou o sidecar não conecta, descoberto só no roteiro
+- **Impacto:** a task não sobe ou o sidecar não conecta, descoberto só no roteiro. Risco residual de segurança aceito (confirmado): o papel da task é visível a todos os contêineres, e a aplicação pode ler a chave AES no Secrets Manager (no Kubernetes e no compose o arquivo nem é montado na aplicação)
 - **Mitigação:**
-    - Contêiner `n3x-files` com o mesmo layout de `/run/n3x` das outras topologias e `chown` e `chmod` explícitos
-    - Regras `ecs_*` no JSON da task e política IAM mínima versionada
+    - Contêiner `n3x-files` com `essential: false`, com o mesmo layout de `/run/n3x` das outras topologias e `chown` e `chmod` explícitos
+    - Regras `ecs_*` no JSON da task e política IAM de menor privilégio versionada (só os ARNs necessários)
     - Checklist de 12 itens no roteiro, com o SHA-256 do `n3x.yaml`
-- **Plano de contingência:** EFS com ponto de acesso de UID 17000 como alternativa documentada (hipótese), sem mudar o `n3x.yaml`
+    - `op/seguranca.md` avisa explicitamente a diferença entre o ECS e as outras topologias
+- **Plano de contingência:** endurecimento opcional documentado (confirmado): EFS com ponto de acesso de UID 17000 contendo a chave, sem permissão da task no Secrets Manager, sem mudar o `n3x.yaml`
 
 ### Endereço FQDN do controller não serve a todo cluster
 
 - **Probabilidade:** média
-- **Impacto:** em cluster com domínio diferente de `cluster.local` ou sem permissão para criar o namespace do Cloud Map com esse nome, o `n3x.yaml` de referência não resolve
+- **Impacto:** em cluster com domínio diferente de `cluster.local` ou sem permissão para criar o namespace do Cloud Map com esse nome, o `n3x.yaml` de referência não resolve. O FQDN fixo `n3x-controller.n3x.svc.cluster.local:17443` em todas as topologias é decisão confirmada
 - **Mitigação:**
-    - O endereço é só do exemplo; o guia explica como trocar o nome no modelo e no `--controller-name` do certificado
+    - O guia explica como trocar o nome no modelo e no `--controller-name` do certificado; no ECS exige um namespace privado do Cloud Map com o nome `n3x.svc.cluster.local`
     - `cfg_controller_address` confere modelo e certificado juntos
-- **Plano de contingência:** usar o nome curto `n3x-controller` com `Service` do tipo `ExternalName` no namespace da aplicação e aceitar um `n3x.yaml` diferente no ECS (ponto P-01)
+- **Plano de contingência:** usar o nome curto `n3x-controller` com `Service` do tipo `ExternalName` no namespace da aplicação e aceitar um `n3x.yaml` diferente no ECS (ponto P-01, confirmado como contingência)
 
 ### Painéis e regras apodrecem quando uma métrica muda de nome
 

@@ -21,7 +21,7 @@ Responsável: Guilherme Giusti
 
 **Atores.** CI de cada um dos cinco repositórios (chama o workflow reutilizável no PR), workflows centrais do `n3x-sdk` (noturno, pré-release, despacho), harness `n3x-e2e`, aplicações de teste `eco` (Go) e `eco-py` (Python), plugin só de teste `n3xtest.faults`, simulador `n3x-load` da FDD 51 (só no cenário de paridade e no teto de memória do core), bot `n3x-ci-bot` (PR de pares e comentários), mantenedor do N3X (revisa falhas, quarentena e o portão de release).
 
-**Limites.** Esta FDD não muda o comportamento de nenhum processo do N3X: ela consome contratos. Ficam fora: os exemplos de deploy e os guias (FDD 47), os testes unitários e as suítes de conformidade de cada componente (FDDs 07, 12, 16, 17, 18 e 32 a 35, aqui só reaproveitadas como dados), a matriz das imagens de build e os cenários de falha do `n3x-plugin build` (FDDs 19 a 24 e 46), o benchmark open-loop (FDD 50, que depende desta), o simulador de 500 sidecars (FDD 51) e o conteúdo dos cenários Istio (FDD 49, gerada em paralelo; aqui só o lugar reservado).
+**Limites.** Esta FDD não muda o comportamento de nenhum processo do N3X: ela consome contratos. Ficam fora: os exemplos de deploy e os guias (FDD 47), os testes unitários e as suítes de conformidade de cada componente (FDDs 07, 12, 16, 17, 18 e 32 a 35, aqui só reaproveitadas como dados), a matriz das imagens de build e os cenários de falha do `n3x-plugin build` (FDDs 19 a 24 e 46), o benchmark open-loop (FDD 50, que depende desta), o simulador de 500 sidecars (FDD 51) e o conteúdo dos cenários Istio (FDD 49; aqui os cenários bloqueantes existem no catálogo e o conteúdo é pendência externa dela).
 
 **Suposições**
 - As imagens `ghcr.io/giustech/n3x/{sidecar-builder,sidecar,controller-builder,controller}` existem por tag imutável e digest, registradas em `n3x-builder/compat/images.json` (FDD 46)
@@ -42,9 +42,10 @@ Responsável: Guilherme Giusti
 - PRD 1.5: FR-001 a FR-004, FR-006, FR-007, FR-015 e FR-016 nos cenários; "Testes e validação" (integração com Envoy real, conformidade por alvo, segurança, por ambiente, longa duração, acessibilidade); disponibilidade (zero erros por causa do controller, zero requisições cortadas, volta ao painel em até 30 s); os 22 critérios de aceitação (numerados CA-01 a CA-22 na ordem do PRD, tabela da seção 9)
 - HLDs: plataforma ("Matriz de CI entre repositórios", "Regras de versionamento", riscos "Matriz cara demais" e "Versões desencontradas"); `n3x-sidecar` (riscos de negação gRPC e de iteração de filtros); `n3x-plugin-core` (teste de restart e teste cruzado sidecar N-1 contra controller N)
 - ADRs: ADR-008 e ADR-009 do `n3x-sdk`; ADR-007 do `n3x-builder`; ADR-004 e ADR-007 do `n3x-plugin-core`; ADR-004 do `n3x-controller`
-- Lacunas fechadas aqui: **L-41** (dono do teste de longa duração: esta FDD, cenários `E2E-SOAK-01` e `E2E-SOAK-02`, hipótese H-14) e **L-43** (parte da 48: plugin só de teste `n3xtest.faults`, hipótese H-07; a parte da 13 já foi fechada lá). Lacunas aplicadas: L-16 (nada escuta na `17001`), L-17 (`n3x probe`), L-18 (gatilho `POST /drain`), L-42 (cópia do `EnvoyFilter`, consumida quando a FDD 49 preencher). Lacuna reservada: L-27 (FDD 49)
+- Lacunas fechadas aqui: **L-41** (dono do teste de longa duração: esta FDD, cenários `E2E-SOAK-01` e `E2E-SOAK-02`, H-14, confirmado) e **L-43** (parte da 48: plugin só de teste `n3xtest.faults`, H-07, confirmado; a parte da 13 já foi fechada lá). Lacunas aplicadas: L-16 (nada escuta na `17001`), L-17 (`n3x probe`), L-18 (gatilho `POST /drain`), L-42 (cópia do `EnvoyFilter`, consumida quando a FDD 49 preencher). Lacuna reservada: L-27 (FDD 49)
 - Marcos: fecha o **M4**; repete o M2 como regressão e o M3 de ponta a ponta (seção 9)
 - FDDs consumidas: 03, 07, 12, 13, 14, 15, 16, 18, 23, 25 a 29, 31 a 47 e 51
+- Numeração: este arquivo é o SDK-16 (global "FDD 48") e a FDD-SDK-15 é a global "FDD 47". "FDD NN" sem prefixo é numeração global; "FDD 15" e "FDD 16" podem ser FDDs externas do sidecar (outro repositório), não do SDK
 
 **Tabela de rastreabilidade dos pedidos (pedido → cenário ou contrato)**
 
@@ -59,10 +60,10 @@ Todo pedido dirigido à FDD 48 no `REGISTRO-DE-DECISOES.md`, nas FDDs e no ASSUN
 | R-05 | FDD 11 | ponta a ponta do polling e da exportação; envio com e sem CSRF | `E2E-PNL-02`, `E2E-PNL-03`, `E2E-SEC-07` |
 | R-06 | FDD 12 | reaproveitar `hostconformance.Cases()` | `E2E-CNF-02` |
 | R-07 | FDD 13 | plugin só de teste de panic e atraso (L-43) | C6 (`n3xtest.faults`); `E2E-FLT-01` a `E2E-FLT-06` |
-| R-08 | FDD 13 | consumir `testdata/cases.json` | `E2E-TRF-01` a `E2E-TRF-05` |
+| R-08 | FDD 13 | consumir `testdata/cases.json` | `E2E-TRF-01` a `E2E-TRF-03` e `E2E-TRF-05` (`E2E-TRF-04` fica registrado como `removed: true`, ID nunca reaproveitado, contrato 2) |
 | R-09 | FDD 13 | aplicações Go e Python com `pedidos.v1.Pedidos/Obter` e eco de headers (P-02 da 13) | C7 |
 | R-10 | FDD 13 | `n3x-plugin add` do exemplo a partir da árvore | C4 (proxy de módulos local); `E2E-BLD-01` |
-| R-11 | FDD 14 | gerar `giustech.ratelimit` nas 3 combinações, `add`, build e página e cartão no painel | `E2E-BLD-06` |
+| R-11 | FDD 14 | gerar `giustech.ratelimit` nas 4 combinações (proxy; controller; duas metades; duas metades com `--no-proto`), `add`, build e página e cartão no painel | `E2E-BLD-06` |
 | R-12 | FDDs 16 e 46 | comparar capacidades pelo log `adapter_loaded` | `E2E-BLD-03` |
 | R-13 | FDDs 17 e 50 | medir o executor no Envoy real; contingência de rodar os golden com o `.so` do builder | `E2E-CNF-01` (comportamento); `n3x_plugin_duration_seconds` como medida informativa no relatório (C10); latência como portão fica na FDD 50 |
 | R-14 | FDD 18 | longa duração (L-41) e injeção de panic ponta a ponta | `E2E-SOAK-*`; `E2E-FLT-01` a `E2E-FLT-05` |
@@ -106,17 +107,38 @@ Todo pedido dirigido à FDD 48 no `REGISTRO-DE-DECISOES.md`, nas FDDs e no ASSUN
 | R-52 | ASSUNTO | artefatos em falha: logs JSON, snapshot de métricas, perfil de goroutines e core dump | C10 |
 | R-53 | ASSUNTO | ECS manual: onde mora o roteiro e como o resultado é registrado | roteiro e `registro.md` da FDD 47 (contrato 17 dela); portão `MAN-02` em C11 |
 
+**Decisões aprovadas na clarificação**
+- `E2E-GRPC-DENY` tem `retries: 0` em todos os tiers: qualquer falha é `failed` e reprova PR, noturno e release; os demais cenários bloqueantes mantêm uma nova tentativa, e o gate aceita `flaky` neles só uma vez por candidata
+- Não há contingência de release manual com a célula arm64 de uma noite verde: o `prerelease` espera o runner arm64 com prazo e, se estourar, o mantenedor reexecuta; o status só sai `success` com as duas arquiteturas
+- Core dump de erro fatal do Go (PRD): pede-se ao sidecar (FDDs 25 a 30, outro repositório) um campo ou repasse ativável de `GOTRACEBACK=crash` nas imagens `*-e2e` e no soak
+- CA-06 (volta ao painel em até 30 s com cerca de 200 serviços sem `session.hmac_key`): dono da prova dos 200 serviços é a FDD 51 (`n3x-load sim`, ancorado pela paridade do `E2E-CTL-06`); aqui a frota de 10 sidecars em 5 serviços prova só a parte até 30 s
+- Istio bloqueia a v1.0.0 (cenários `E2E-IS-*` e `kind-istio` bloqueantes no M4 e no gate); molde do `n3x-new` com quatro combinações; corpo JSON da negação HTTP (`{"code":<status>,"message":"<mensagem>"}`); FQDN fixo do controller `n3x-controller.n3x.svc.cluster.local:17443` em todas as topologias; entrega de chave por volume nomeado (compose e kind) e risco residual no ECS
+- O harness `n3x-e2e` (`deploy/e2e/`, `deploy/e2e/plugins/faults`) e `deploy/apps/eco` são módulos aninhados e devem constar no HLD e no ADR-011
+- As demais hipóteses numéricas, de CI e de baixo risco ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Captura da config enviada ao controller (`RegisterRequest.config`, TLS 1.3) para `secrettest.Leaks` em `E2E-SEC-01`: a forma está em aberto (por exemplo, log ou captura no controller de teste)
+- `E2E-SEC-06` prova o 429 com `Retry-After`, não o desbloqueio após 15 min: lacuna do CA-13
+- `prerelease` para tags de `n3x-sidecar/core` e `n3x-controller/host`: o `e2e-dispatch` só lista `n3x-sdk` e `n3x-plugin-core`
+- Válvula de escape para `timeout-minutes: 40` e para o status obrigatório quando `infra` se repete: hoje só reexecutar
+- Onde fica o contador de `flaky` "uma vez por candidata" do gate: não definido
+- `Real bool` em `conformance.Case` e `hostconformance.Case`: acréscimo pendente nas FDDs 07 e 12
+- Dependência do módulo raiz pelos módulos aninhados: decidido apenas o uso de `replace ../..` no PR do SDK e da versão publicada nos demais usos (contrato 1); se `yamlconv` é importado de `deploy/e2e` fica em aberto
+- Divergências para o Workflow 3: PRD e HLD ("conformidade do SDK em todo PR nos dois alvos e nas duas arquiteturas") versus esta FDD (conformidade real só noturna e só `envoy-1.40`; no PR vem do adaptador falso da FDD 17); HLD ("próxima candidata do Envoy e cada patch do Istio: agendado") versus imagens `-rc` publicadas; "Testes por ambiente: Kubernetes com Istio" até a FDD 49; PRD (core dump no soak, via repasse de `GOTRACEBACK=crash`); marcos M2 a M4 não estão no PRD nem no HLD (fonte provável: registro de decisões)
+- Critérios de aceite do PRD sem prova completa nesta FDD (dono em outra): CA-09 (FDDs 19 a 24 e 46), CA-18 (FDD 50), CA-19 (FDD 51), CA-06 com 200 serviços (FDD 51), CA-17 (config enviada, ver a primeira pendência), CA-13 (desbloqueio em 15 min, ver a segunda)
+- Dependem de outros repositórios: FDD 49 (`E2E-IS-*`, imagem `istio-1.31`, `EnvoyFilter`), FDD 46 (`compat/images.json`, `pairs.json`, `runtime-published`, `N3X_DEV_MODULES`, `release check`, gate do `oci-publish.yml`, `n3xci alert`), FDD 51 (`n3x-load sim`), FDD 45, FDD 35 (axe), FDDs 25 a 30 (repasse de `GOTRACEBACK=crash`) e `make e2e-artifacts` nos cinco repositórios
+
 ---
 
 ### 2. Objetivos técnicos
 
 - **Todo critério de aceite multi-repositório vira teste automático.** Medida: cada um dos 22 critérios do PRD tem pelo menos um cenário do catálogo, um dono em outra FDD ou um roteiro manual da FDD 47 (tabela da seção 9); nenhum critério sem destino. Os cenários com `blocks_release: true` reprovam o portão de release quando falham.
-- **Negação gRPC nunca como sucesso.** Invariante: em 100% das execuções de `E2E-GRPC-DENY`, o cliente gRPC em Go e em Python recebe `PERMISSION_DENIED` (`grpc-status: 7`, `grpc-message: bloqueado`, trailers-only, HTTP 200) e a aplicação não recebe a chamada; nenhuma execução observa `grpc-status: 0`. O cenário nunca entra em quarentena.
+- **Negação gRPC nunca como sucesso.** Invariante: em 100% das execuções de `E2E-GRPC-DENY`, o cliente gRPC em Go e em Python recebe `PERMISSION_DENIED` (`grpc-status: 7`, `grpc-message: bloqueado`, trailers-only, HTTP 200) e a aplicação não recebe a chamada; nenhuma execução observa `grpc-status: 0`. O cenário nunca entra em quarentena e tem `retries: 0` em todos os tiers: qualquer falha é `failed` e reprova PR, noturno e release.
 - **Mesmo resultado em duas linguagens.** Medida: o resultado normalizado de cada caso de `cases.json` (contrato 9) é igual entre a aplicação Go e a Python e igual ao `expect` do arquivo, em HTTP/1.1, HTTP/2 e gRPC.
 - **Controller fora não causa erro.** Medida: 0 respostas inesperadas e 0 erros de conexão em 3.000 requisições (50 rps por 60 s) com o controller desligado na subida e em 3.000 requisições durante uma derrubada por `SIGKILL`.
-- **Volta ao painel em até 30 s.** Medida com 10 sidecars reais (5 serviços, 2 instâncias cada), do primeiro `200` de `/ready` do controller novo até as 10 instâncias `connected`: com `session.hmac_key`, mediana até 12 s e máximo até 30 s, sem nenhum `Login` novo; sem a chave, máximo até 30 s com no máximo um bcrypt por serviço (hipótese de limiares, H-16).
+- **Volta ao painel em até 30 s.** Medida com 10 sidecars reais (5 serviços, 2 instâncias cada), do primeiro `200` de `/ready` do controller novo até as 10 instâncias `connected`: com `session.hmac_key`, mediana até 12 s e máximo até 30 s, sem nenhum `Login` novo; sem a chave, máximo até 30 s com no máximo um bcrypt por serviço (limiares H-16, confirmados).
 - **Zero requisição cortada.** Medida: 0 cortadas (definição do contrato 9) em 10 rollouts de 3 réplicas sob 200 rps contínuos no kind e em 50 requisições de 2 s em voo no `docker compose stop`.
-- **PR cabe na rotina de uma pessoa.** Medida: o job de PR (`tier: pr`, compose, amd64) termina em até 25 min no p95 das últimas 30 execuções, incluindo o build das imagens de desenvolvimento (hipótese, H-02); a matriz noturna cabe em 3 h de relógio com jobs em paralelo.
+- **PR cabe na rotina de uma pessoa.** Medida: o job de PR (`tier: pr`, compose, amd64) termina em até 25 min no p95 das últimas 30 execuções, incluindo o build das imagens de desenvolvimento (H-02, confirmado); a matriz noturna cabe em 3 h de relógio com jobs em paralelo.
 - **Compose do zero em até 5 minutos.** Medida: `docker compose build`, `bootstrap.sh` e `docker compose up -d --wait` somam no máximo 300 s num runner `ubuntu-24.04` com o cache de build vazio e as imagens base já baixadas (P-04 da FDD 47 respondido: inclui o build).
 - **Mesma imagem e mesmo `n3x.yaml` em compose e kind.** Invariante: o `n3x.yaml` gerado por uma única execução do `bootstrap.sh` tem o mesmo SHA-256 no compose e no kind, e o sidecar roda pelo mesmo digest nos dois.
 - **Nenhum segredo fora do lugar.** Medida: `secrettest.Leaks` encontra 0 marcadores em todos os logs, mensagens de erro, páginas, downloads e exportações capturados numa execução noturna completa.
@@ -139,7 +161,7 @@ Todo pedido dirigido à FDD 48 no `REGISTRO-DE-DECISOES.md`, nas FDDs e no ASSUN
 - Portão de release, status de commit `n3x-e2e/release`, linhas `source: e2e` em `compat/pairs.json` e o portão dos roteiros manuais (contrato 11)
 - Política de testes instáveis e quarentena (contrato 12)
 - Teste de longa duração (L-41) noturno e de pré-release
-- Lugar reservado dos cenários Istio `E2E-IS-*` e do ambiente `kind-istio` (contrato 13)
+- Cenários Istio `E2E-IS-*` (bloqueantes no M4, no `prerelease` e no gate) e ambiente `kind-istio` (contrato 13); o conteúdo deles depende da FDD 49
 
 **Excluído**
 - Exemplos de deploy, guias e roteiros manuais (conteúdo): FDD 47 (SDK-15)
@@ -156,7 +178,7 @@ Todo pedido dirigido à FDD 48 no `REGISTRO-DE-DECISOES.md`, nas FDDs e no ASSUN
 ### 4. Fluxos detalhados e diagramas
 
 **Fluxo principal: PR em qualquer um dos cinco repositórios (tier `pr`)**
-1. O PR abre ou recebe commit no repositório X. O `ci.yml` de X tem o job `e2e`, que chama o workflow reutilizável `giustech/n3x-sdk/.github/workflows/e2e.yml@<sha fixado>` com `repo: X`, `ref: <sha do PR>`, `tier: pr`, `env: compose`, `arch: amd64`, `target: envoy-1.40` (contrato 5). O SHA do workflow é atualizado por PR do bot quando o `n3x-sdk` muda o harness (hipótese, H-03)
+1. O PR abre ou recebe commit no repositório X. O `ci.yml` de X tem o job `e2e`, que chama o workflow reutilizável `giustech/n3x-sdk/.github/workflows/e2e.yml@<sha fixado>` com `repo: X`, `ref: <sha do PR>`, `tier: pr`, `env: compose`, `arch: amd64`, `target: envoy-1.40` (contrato 5). O SHA do workflow é atualizado por PR do bot quando o `n3x-sdk` muda o harness (H-03, confirmado)
 2. `n3x-e2e plan` monta o `combo.json` (contrato 4): X vem do código-fonte no `ref` do PR; os outros quatro vêm da combinação estável publicada, lida de `n3x-sdk/deploy/versions.json` (par mais novo `ok` nas duas arquiteturas) e de `n3x-builder/compat/images.json` (tags e digests). Uma linha `n3x-e2e: <repo>#<número>` no corpo do PR troca outro repositório pelo head daquele PR, para mudanças coordenadas
 3. `n3x-e2e prepare`:
    - clona as fontes do combo e roda o alvo `make e2e-artifacts` de cada repositório que vem do código-fonte (módulos em zip para o proxy local e imagens de desenvolvimento; contrato 4)
@@ -164,6 +186,7 @@ Todo pedido dirigido à FDD 48 no `REGISTRO-DE-DECISOES.md`, nas FDDs e no ASSUN
    - se X é `n3x-sdk`, `n3x-sidecar`, `n3x-controller` ou `n3x-plugin-core`, constrói as imagens de build de desenvolvimento com os módulos do proxy local; se X é `n3x-builder`, constrói as imagens de build do código-fonte com os módulos publicados
    - constrói, pelos Dockerfiles do operador (`deploy/images/*/Dockerfile`, FDD 47) e pela variante `e2e` (mais `n3xtest.faults`), as imagens `n3x-e2e/sidecar:<run>`, `n3x-e2e/sidecar-e2e:<run>`, `n3x-e2e/controller:<run>`, `n3x-e2e/controller-e2e:<run>`, `n3x-e2e/eco:<run>` e `n3x-e2e/eco-py:<run>`; todo `.so` e todo binário saem do `n3x-plugin build`
    - roda o `deploy/config/bootstrap.sh --out .n3x/exemplo` uma vez e o preparo do e2e (`n3x-e2e prepare secrets`) para os perfis com canário (contrato 8)
+   - as imagens construídas no job de preparo seguem para os jobs de execução por artefato `docker save` (jobs hospedados não compartilham estado Docker); o mesmo vale para o soak de 4 h, que usa a pilha construída no job anterior
 4. `n3x-e2e run --tier pr --env compose --arch amd64` seleciona do catálogo os cenários com `pr` em `tiers`, agrupa por pilha (`exemplo`, `standalone`, `e2e`) para subir cada pilha uma vez e roda cada cenário como subteste de `go test`, na ordem do catálogo, deixando por último os que reiniciam o controller
 5. Em cada cenário: prepara o estado (pilha de pé, contadores lidos no scrape), executa, confere as asserções e as medidas; em falha, coleta os artefatos (contrato 10) e aplica a política de nova tentativa (contrato 12)
 6. `n3x-e2e report` grava `e2e-report.json`, escreve a tabela no `GITHUB_STEP_SUMMARY`, publica os artefatos e sai com o código do contrato 3. O job `e2e` é um status obrigatório na proteção da `main` dos cinco repositórios
@@ -177,17 +200,17 @@ Todo pedido dirigido à FDD 48 no `REGISTRO-DE-DECISOES.md`, nas FDDs e no ASSUN
 1. Uma imagem é publicada em pré-release (`-rc.N`, canal `prerelease`) pelo `oci-publish.yml` da FDD 46, que envia `repository_dispatch` `runtime-published` também ao `n3x-sdk` (pedido da FDD 47); ou o mantenedor dispara `e2e-dispatch.yml` à mão para uma tag de módulo candidata (`n3x-sdk`, `n3x-plugin-core`)
 2. `n3x-e2e plan --tier prerelease` usa a candidata e o estável dos outros; roda o catálogo `prerelease` em amd64 e arm64, compose e kind, inclusive `E2E-SOAK-02` (4 h)
 3. Com todos os cenários `blocks_release` verdes nas duas arquiteturas, grava o status `n3x-e2e/release` em `success` no commit da candidata; senão `failure` com o link do relatório
-4. O workflow de release estável do repositório (FDD 46 para imagens; `release.yml` dos módulos) chama `n3x-e2e gate --repo <repo> --commit <sha>` antes de criar a tag; sem `success`, o release para com saída 5. Para tags do `n3x-sdk` que mudam `deploy/` ou `docs/`, o portão também exige as três linhas `passou` no `registro.md` dos roteiros manuais (`MAN-01` a `MAN-03`)
+4. O workflow de release estável do repositório (FDD 46 para imagens; `release.yml` dos módulos) chama `n3x-e2e gate --repo <repo> --commit <sha>` antes de criar a tag; sem `success`, o release para com saída 5. Para tags do `n3x-sdk` que mudam `deploy/`, `docs/operador/` ou `docs/autor/`, o portão também exige as três linhas `passou` no `registro.md` dos roteiros manuais (`MAN-01` a `MAN-03`)
 
 **Fluxos alternativos e exceções**
 - **Patch do Envoy ou do Istio:** o `upstream.yml` da FDD 46 abre o PR `candidate`; o merge cria a `-rc` automática, que dispara o pré-release daqui. O próximo candidato do Envoy (`envoy-dev`, sem imagem publicada) continua só na FDD 46 (teste negativo); aqui só entram imagens publicadas
 - **PR do bot `deploy/sync-<data>` (FDD 47):** roda o tier `pr` com o combo vindo do `versions.json` do próprio PR (a combinação nova), em compose amd64; o merge humano só acontece com o e2e verde
-- **Infraestrutura falhou** (rede do GHCR, Docker Hub com limite, runner sem disco, kind não sobe): o cenário termina `infra` (não `failed`), a execução sai com 3 (inconclusiva), o job tenta uma vez de novo; se repetir, issue `e2e-infra` e o status do PR fica `error`, nunca `success`
+- **Infraestrutura falhou** (rede do GHCR, Docker Hub com limite, runner sem disco, kind não sobe): o cenário termina `infra` (não `failed`), a execução sai com 3 (inconclusiva), o job tenta uma vez de novo; se repetir, issue `e2e-infra` e o status do PR fica `error`, nunca `success` (o status é obrigatório e o job tem `timeout-minutes: 40`; uma válvula de escape para infraestrutura repetidamente fora do ar fica como pendência, hoje só reexecutar)
 - **Combinação impossível** (nenhum par compatível em `compat/pairs.json` para a candidata): saída 4 antes de construir qualquer imagem, com a regra do ADR-001 do `n3x-builder` que recusou
-- **Fila do runner arm64 acima de 60 min à noite:** a célula sai `skipped` com o motivo e conta como falha de infraestrutura; no pré-release, a célula espera (o status só sai com as duas arquiteturas)
+- **Fila do runner arm64 acima de 60 min à noite:** a célula sai `skipped` com o motivo e conta como falha de infraestrutura; no pré-release, a célula espera com prazo (o status só sai com as duas arquiteturas) e, se o prazo estourar, o mantenedor reexecuta
 - **Cenário que falha e passa na nova tentativa:** resultado `flaky`, o relatório guarda as duas tentativas e a issue `e2e-flaky` recebe um comentário (contrato 12)
 - **Cenário em quarentena:** roda e é relatado, mas não reprova; cenários `blocks_release` e `E2E-GRPC-DENY` nunca entram em quarentena
-- **Istio:** enquanto a FDD 49 não preencher o contrato 13, as células `kind-istio` não são geradas; o critério CA-04 em `istio-1.31` fica pendente no M5
+- **Istio:** os cenários `E2E-IS-*` e a célula `kind-istio` são bloqueantes no M4, no `prerelease` e no gate (decisão da FDD 15 do SDK); dependem da FDD 49 e do kind com Istio, e o conteúdo deles é pendência externa. Se o alvo `istio-1.31` for adiado, isso é decisão registrada no PRD (contingência do PRD), não da CI
 
 **Diagramas**
 
@@ -288,7 +311,9 @@ stateDiagram-v2
 - Semântica:
   - Consome, sem copiar, os arquivos do contrato 18 da FDD 47: `deploy/compose/compose.yaml`, `deploy/kubernetes/overlays/kind`, `deploy/config/bootstrap.sh` e os modelos, `deploy/apps/eco`, `deploy/images/*/Dockerfile`, `deploy/versions.json`, `deploy/observability/` (regras, painéis e `series.txt`) e, quando a FDD 49 preencher, `deploy/istio/`. As pilhas do e2e são arquivos de sobreposição (`docker compose -f ../../compose/compose.yaml -f compose.e2e.yaml`) e overlays kustomize que têm o overlay `kind` como base; o arquivo da FDD 47 nunca é editado pelo harness
   - `deploy/e2e` é módulo aninhado (mesmo padrão do `deploy/tools` da FDD 47): grpc-go, protobuf, `golang.org/x/mod`, `golang.org/x/net/html` e os stubs dos outros repositórios não entram no `go.mod` do SDK (ADR-011)
-  - `plugins/faults` é outro módulo, nunca publicado por tag; o ruleset de tags do `n3x-sdk` recusa qualquer tag com prefixo `deploy/` (hipótese, H-08)
+  - `plugins/faults` é outro módulo, nunca publicado por tag; o ruleset de tags do `n3x-sdk` recusa qualquer tag com prefixo `deploy/` (H-08, confirmado)
+  - Dependência do módulo raiz: no PR do próprio SDK, `deploy/e2e`, `deploy/e2e/plugins/faults` e `deploy/apps/eco` usam `replace ../..` (caminho relativo até o módulo raiz); nos demais usos, a versão publicada do SDK do combo. Os três módulos aninhados devem constar no HLD e no ADR-011. Se `yamlconv` é importado de `deploy/e2e` fica como pendência
+  - Todas as pilhas do e2e alcançam o controller pelo FQDN fixo `n3x-controller.n3x.svc.cluster.local:17443`: no Kubernetes é o nome do `Service` no namespace `n3x`, e no compose é um alias de rede do serviço do controller, de modo que o `n3x.yaml` seja idêntico byte a byte nas duas topologias (`E2E-ENV-02`)
   - Os nomes acima são contrato com as FDDs 49 (cenários Istio) e 50 (reaproveita `harness/images`, `harness/scrape` e as aplicações): mudam só por adição
   - Pedido à FDD 47 (pendente na consolidação): acrescentar ao contrato 1 dela as pastas `deploy/e2e/`, `deploy/apps/eco-py/`, `deploy/apps/proto/` e os quatro workflows, para a regra `layout` do `deploytool check` aceitar (I-05)
 
@@ -314,22 +339,23 @@ pilhas: exemplo, standalone, e2e | cenários: 22 | estimativa: 17 min
   - `blocks_release: true` exige `quarantinable: false`; todo critério `CA-xx` coberto por cenário tem pelo menos um cenário com `blocks_release: true`, menos os critérios cujo dono é outra FDD (tabela da seção 9)
   - Um teste de `catalog_test.go` confere: cada `id` tem exatamente um subteste com o mesmo nome em `scenarios/`; cada subteste está no catálogo; `tiers` e `envs` válidos; `timeout` dentro de 1 min a 300 min
   - Mudança de comportamento de um cenário que bloqueia o release é mudança de contrato: o PR cita o critério e a FDD dona
-  - Os cenários `E2E-IS-*` estão reservados (contrato 13) e os `MAN-*` são os roteiros manuais da FDD 47, que só entram no portão (contrato 11)
+  - Os cenários `E2E-IS-*` são bloqueantes (contrato 13; conteúdo dependente da FDD 49) e os `MAN-*` são os roteiros manuais da FDD 47, que só entram no portão (contrato 11)
 
 | ID | O que prova | Critério | Tiers | Ambiente e arquitetura | Bloqueia |
 | --- | --- | --- | --- | --- | --- |
 | `E2E-ENV-01` | compose do zero em até 300 s (build, `bootstrap.sh`, `up --wait`) | objetivo do PRD; FDD 47 P-04 | pr, nightly | compose amd64 | sim |
-| `E2E-ENV-02` | mesmo `n3x.yaml` (SHA-256) e mesmo digest do sidecar no compose e no kind, com o mesmo `config_hash` em `n3x_build_info` | CA-02 | nightly, prerelease | compose e kind amd64 | sim |
+| `E2E-ENV-02` | mesmo `n3x.yaml` (SHA-256, com o FQDN fixo do controller `n3x-controller.n3x.svc.cluster.local:17443` nas duas topologias) e mesmo digest do sidecar no compose e no kind, com o mesmo `config_hash` em `n3x_build_info`; a chave AES chega por volume nomeado preenchido pelo serviço inicial `n3x-files` (root, dono 17000:17000, modo 0440) | CA-02 | nightly, prerelease | compose e kind amd64 | sim |
 | `E2E-ENV-03` | overlay `kind` com digests por `kustomize edit set image`; rollout completo e pods `2/2 Ready` nas versões `min` e `latest` do Kubernetes | CA-02 | nightly, prerelease | kind amd64 | sim |
 | `E2E-ENV-04` | `/live` e `/ready` do sidecar e do controller; nada escuta em TCP `17001`; admin só no socket; aplicação inalcançável fora do sidecar; tempo até pronto registrado (informativo, meta da FDD 50) | FR-003, L-16 | pr, nightly | compose e kind | sim |
 | `E2E-M2` | regressão do M2: sidecar sem bloco `controller`, `.so` do builder, header e negação, `probe live` e `probe ready` com 0, `docker compose stop` sai com 0 | M2 | pr | compose amd64 | sim |
 | `E2E-TRF-01` | casos de `cases.json` com a aplicação Go em HTTP/1.1, HTTP/2 e gRPC | CA-03 | pr, nightly, prerelease | compose amd64 e arm64; kind amd64 | sim |
 | `E2E-TRF-02` | os mesmos casos com a aplicação Python | CA-03 | pr, nightly, prerelease | compose amd64 e arm64 | sim |
 | `E2E-TRF-03` | resultado normalizado igual entre Go e Python e igual ao `expect` (contrato 9) | CA-03 | pr, nightly, prerelease | compose | sim |
-| `E2E-GRPC-DENY` | negação gRPC chega como `PERMISSION_DENIED` (HTTP 200, `grpc-status: 7`, `grpc-message: bloqueado`, trailers-only) nos clientes grpc-go e grpcio; a aplicação não recebe; nunca `grpc-status: 0` | CA-04 (envoy-1.40) | pr, nightly, prerelease | compose amd64 e arm64; kind amd64 | sim, nunca em quarentena |
+| `E2E-GRPC-DENY` | negação gRPC chega como `PERMISSION_DENIED` (HTTP 200, `grpc-status: 7`, `grpc-message: bloqueado`, trailers-only) nos clientes grpc-go e grpcio; a aplicação não recebe; nunca `grpc-status: 0`; `retries: 0` em todos os tiers | CA-04 (envoy-1.40) | pr, nightly, prerelease | compose amd64 e arm64; kind amd64 | sim, nunca em quarentena |
+| `E2E-TRF-04` | removido (`removed: true`); o ID nunca é reaproveitado | n/a | n/a | n/a | n/a |
 | `E2E-TRF-05` | deltas de métrica dos casos (`n3x_plugin_denies_total{instance,code}`, `n3x_n3x_example_denies_total`) iguais aos de `cases.json` | FR-004 | pr, nightly | compose | sim |
 | `E2E-FLT-01` | panic síncrono com `failure: open`: a requisição segue com o header, `n3x_plugin_panics_total` sobe exatamente 1, o processo do Envoy é o mesmo (PID e `restart_count` iguais) | CA-05 | pr, nightly, prerelease | compose amd64 e arm64 | sim |
-| `E2E-FLT-02` | panic com `failure: closed`: HTTP 503; gRPC com HTTP 200, `grpc-status: 14` trailers-only; `panics_total` mais 1 | CA-05 | pr, nightly, prerelease | compose amd64 e arm64 | sim |
+| `E2E-FLT-02` | panic com `failure: closed`: HTTP 503 com corpo JSON `{"code":503,"message":...}` e `content-type: application/json; charset=utf-8`; gRPC com HTTP 200, `grpc-status: 14` trailers-only; `panics_total` mais 1 | CA-05 | pr, nightly, prerelease | compose amd64 e arm64 | sim |
 | `E2E-FLT-03` | panic no `Go()` e prazo do `Go()` estourado, com `open` e `closed`, conforme a tabela `chain.Effect` (FDDs 07 e 18); `n3x_plugin_failures_total{reason}` | FR-004 | nightly | compose | não |
 | `E2E-FLT-04` | disjuntor: o 5º panic em 60 s abre (`n3x_plugin_breaker_open` 1); `breaker_open` e `plugin_disabled` chegam ao painel exatamente uma vez cada, sem perda | FR-004, FR-016 | nightly | compose | não |
 | `E2E-FLT-05` | panic de ponta a ponta: o evento `panic` aparece no detalhe do sidecar no painel em até 15 s | FR-016 | nightly | compose | não |
@@ -348,12 +374,12 @@ pilhas: exemplo, standalone, e2e | cenários: 22 | estimativa: 17 min
 | `E2E-DRN-01` | `docker compose stop` com 50 requisições de 2 s em voo: 50 respostas 200, `drain_completed` com `exit_code` 0, 0 cortada | CA-08 | pr, nightly | compose | sim |
 | `E2E-DRN-02` | 10 rollouts de 3 réplicas (`maxUnavailable: 0`, `maxSurge: 1`, 45 s) sob 200 rps em HTTP/1.1 com keep-alive, HTTP/2 e gRPC unário pelo `Service`: 0 cortada e 0 erro de conexão | CA-08 | nightly, prerelease | kind amd64 (`latest`) | sim |
 | `E2E-DRN-03` | a mesma carga com a aplicação saindo direto no SIGTERM (sem gatilho): cortadas medidas e relatadas | FDD 29 (I-02 dela) | nightly | kind amd64 | não (informativo) |
-| `E2E-SEC-01` | `secrettest.Leaks` com 0 achados em logs, erros, páginas, downloads, exportações e saídas de `validate` | CA-17, CA-14, FR-007 | pr (logs), nightly, prerelease | compose e kind | sim |
+| `E2E-SEC-01` | `secrettest.Leaks` com 0 achados em logs, erros, páginas, downloads, exportações e saídas de `validate`; a captura da config enviada ao controller (`RegisterRequest.config`, sob TLS 1.3) para o `secrettest.Leaks` é pendência (por exemplo, log ou captura no controller de teste) | CA-17, CA-14, FR-007 | pr (logs), nightly, prerelease | compose e kind | sim |
 | `E2E-SEC-02` | `17443` e `17444` só com TLS 1.3 (cliente TLS 1.2 recusado no handshake); sidecar conectado em TLS 1.3 | CA-17 | pr, nightly | compose | sim |
 | `E2E-SEC-03` | chamada sem sessão e com token inválido recebe `UNAUTHENTICATED` com a mensagem genérica, sem o token no texto | CA-17 | nightly | compose | sim |
 | `E2E-SEC-04` | credencial errada: 5 `UNAUTHENTICATED` e a 6ª `RESOURCE_EXHAUSTED`; sidecar real com credencial errada segue servindo e conta `n3x_controller_logins_total{result="fail"}` | CA-17, FR-002 | nightly | compose | sim |
 | `E2E-SEC-05` | limites do gRPC: 1.001ª conexão recebe `RESOURCE_EXHAUSTED` e fecha em até 1 s; 17º stream `RESOURCE_EXHAUSTED`; mensagem acima de 4 MiB `RESOURCE_EXHAUSTED` | FDD 33 | nightly | compose amd64 | não |
-| `E2E-SEC-06` | painel: 5 senhas erradas bloqueiam (429 com `Retry-After`); login, logout e bloqueio no log JSON sem senha | CA-13, CA-14 | nightly | compose | sim |
+| `E2E-SEC-06` | painel: 5 senhas erradas bloqueiam (429 com `Retry-After`); login, logout e bloqueio no log JSON sem senha; o desbloqueio após 15 min não é provado aqui (lacuna registrada) | CA-13, CA-14 | nightly | compose | sim |
 | `E2E-SEC-07` | CSRF: ação sem `_csrf` 403, com `Origin` de fora 403, com o token 303 | FR-008 | nightly | compose | sim |
 | `E2E-PNL-01` | M3: sidecar novo `connected` em `/plugins/n3x/core/sidecars` com serviço, instância, alvo, versão do Envoy, plugins e hash; leitura recebe 403 em `/usuarios`; exportação sem IP | M3, CA-11, CA-12 | pr, nightly, prerelease | compose | sim |
 | `E2E-PNL-02` | `n3x.example` no painel: menu "Negações", cartão com a contagem igual ao delta de negações, exportação CSV e JSON, "Zerar contagem" só para root (leitura 403) | FR-008, FR-013 | nightly | compose | não |
@@ -376,15 +402,15 @@ pilhas: exemplo, standalone, e2e | cenários: 22 | estimativa: 17 min
 | `E2E-BLD-03` | `adapter_loaded` com as capacidades de `targets/envoy-1.40.yaml` do combo | FDDs 16 e 46 | pr, nightly | compose | sim |
 | `E2E-BLD-04` | bloco `http_filters[n3x]` do bootstrap real igual ao do bootstrap mínimo do builder e ao golden `minimal` | FDD 23 | nightly | compose | não |
 | `E2E-BLD-05` | goldens do bootstrap em `envoy --mode validate` na imagem de runtime do combo, amd64 e arm64, saída sem `deprecated` | FDD 26 | nightly | compose amd64 e arm64 | não |
-| `E2E-BLD-06` | `n3x-new giustech.ratelimit` nas 3 combinações de metades, `add` e build; página e cartão no painel e instância ativa no sidecar | CA-21 | nightly | compose amd64 | sim |
+| `E2E-BLD-06` | `n3x-new giustech.ratelimit` nas 4 combinações (proxy; controller; duas metades; duas metades com `--no-proto`), `add` e build; página e cartão no painel e instância ativa no sidecar | CA-21 | nightly | compose amd64 | sim |
 | `E2E-BLD-07` | fumaça de `n3x-sidecar/images/test/compose.yaml` contra o digest de runtime do combo | FDD 28 | nightly, prerelease | compose amd64 e arm64 | não |
 | `E2E-BLD-08` | Dockerfile do operador compilado num host amd64 e num host arm64 para o mesmo destino dá o mesmo `integrity.value` | CA-10 | nightly | amd64 e arm64 | sim |
 | `E2E-OBS-01` | cada série de `series.txt` aparece no scrape real ao fim da suíte, ou está marcada `condicional` | FDD 47 | nightly | compose | não |
 | `E2E-OBS-02` | o `request_id` enviado pelo cliente aparece no log do sidecar; o `x-request-id` das chamadas ao controller aparece nos dois lados | NFR, ADR-009 | nightly | compose | não |
-| `E2E-SOAK-01` | longa duração de 60 min (L-41): goroutines e memória estáveis, 0 erro fatal | risco "goroutines" | nightly | compose amd64 | não (alerta `e2e-soak`) |
-| `E2E-SOAK-02` | longa duração de 4 h com restart do controller a cada 30 min | risco "goroutines" | prerelease | compose amd64 | sim |
-| `E2E-IS-01` a `E2E-IS-05` | reservados ao Istio (contrato 13) | CA-04 (istio), CA-20 | istio | kind-istio amd64 | definido pela FDD 49 |
-| `MAN-01` a `MAN-03` | roteiros manuais da FDD 47: 30 minutos, ECS e plugin novo | CA-01, CA-02 (ECS), CA-21 | manual | humano | sim, pelo `registro.md` |
+| `E2E-SOAK-01` | longa duração de 60 min (L-41): goroutines (do processo do `.so`, medidas pelo plugin de teste, não pelo supervisor nem pelo controller) e memória estáveis, 0 erro fatal | risco "goroutines" | nightly | compose amd64 | não (alerta `e2e-soak`) |
+| `E2E-SOAK-02` | longa duração de 4 h com restart do controller a cada 30 min; "0 reinício do contêiner" vale só para o sidecar (o controller reinicia de propósito) | risco "goroutines" | prerelease | compose amd64 | sim |
+| `E2E-IS-01` a `E2E-IS-05` | cenários Istio (contrato 13); o conteúdo de cada um depende da FDD 49 (pendência externa) | CA-04 (istio), CA-20 | istio, prerelease | kind-istio amd64 | sim |
+| `MAN-01` a `MAN-03` | roteiros manuais da FDD 47: 30 minutos, ECS e plugin novo; no ECS, a chave AES compartilhada pelo papel da task é risco residual aceito (FDD 15 do SDK, em fechamento) | CA-01, CA-02 (ECS), CA-21 | manual | humano | sim, pelo `registro.md` |
 
 **Exemplo de requisição** (entrada do catálogo)
 ```yaml
@@ -402,7 +428,7 @@ scenarios:
     blocks_release: true
     quarantinable: false
     timeout: 5m
-    retries: 1
+    retries: 0
 ```
 
 **Exemplo de resposta** (`n3x-e2e plan --tier nightly --list --only E2E-GRPC-DENY`)
@@ -433,7 +459,7 @@ E2E-GRPC-DENY  pilha e2e  células: compose/amd64/go, compose/amd64/python, comp
   - `run` nunca chama `docker push` para fora do registro local do kind (`localhost:5001`); imagem com o rótulo `io.n3x.e2e=true` enviada a outro registro é recusada com 1 (guarda contra vazamento do plugin de teste, H-08)
   - `--keep` deixa as pilhas de pé para depurar; sem ele, `run` derruba tudo (`docker compose down -v`, `kind delete cluster`) mesmo em falha, depois de coletar os artefatos
   - Todas as esperas têm prazo; nenhuma espera sem limite; o prazo do cenário vem do catálogo
-  - `gate` lê, pela API do GitHub, o status `n3x-e2e/release` do commit e o relatório ligado a ele; confere que todo cenário `blocks_release` está `ok` ou `flaky` nas duas arquiteturas e, para tags do `n3x-sdk` que mudam `deploy/` ou `docs/`, que `MAN-01` a `MAN-03` têm linha `passou` no `registro.md` para a tag
+  - `gate` lê, pela API do GitHub, o status `n3x-e2e/release` do commit e o relatório ligado a ele; confere que todo cenário `blocks_release` está `ok` ou `flaky` nas duas arquiteturas (`E2E-GRPC-DENY` só `ok`) e, para tags do `n3x-sdk` que mudam `deploy/`, `docs/operador/` ou `docs/autor/`, que `MAN-01` a `MAN-03` têm linha `passou` no `registro.md` para a tag
   - Nenhum comportamento por variável de ambiente; o token do GitHub vem do ambiente do Actions (`GITHUB_TOKEN` ou o token do app `n3x-ci-bot`), como qualquer ferramenta de CI
 
 **Exemplo de requisição**
@@ -518,7 +544,7 @@ imagens de build: n3x-e2e/sidecar-builder:dev-5c1e9a0b7d2f-envoy-1.40 (pin: core
   - **Permissões:** `contents: read` e `packages: read` no PR; o noturno e o despacho usam o token do app `n3x-ci-bot` só para `statuses: write` nos cinco repositórios, `issues: write` no `n3x-sdk` e `pull-requests: write` no `n3x-builder` (pares); PR de fork roda sem segredo nenhum (só imagens públicas)
   - **Concorrência:** `concurrency: e2e-<repo>-<pr>` com cancelamento do anterior no PR; `e2e-nightly` sem cancelamento; o pré-release por `e2e-prerelease-<imagem>-<tag>`
   - **`runtime-published`:** o `client_payload` é o da FDD 46 (`image`, `tag`, `index_digest`, `platforms`, `repository`, `commit`, `channel`); `channel: prerelease` dispara o tier `prerelease`; `channel: stable` dispara o tier `nightly` só da combinação `stable` nova, para gerar as linhas de pares em até 24 h (meta da FDD 46)
-  - **`security.yml` (pedido da FDD 24):** `govulncheck` v1.1.4 (o mesmo da imagem de build) em cada `go-dirs`; `gosec` fixado (2.21.x, hipótese H-21) com `-exclude-generated` e o arquivo de exceções do repositório; varredura do repositório que recusa a chave de teste do `secrettest` (bytes 0 a 31, em base64 e hex) fora de `*_test.go` e `testdata/` (hipótese da FDD 03) e qualquer texto `n3x-canary-` fora de teste; achado de severidade alta reprova
+  - **`security.yml` (pedido da FDD 24):** `govulncheck` v1.1.4 (o mesmo da imagem de build) em cada `go-dirs`; `gosec` fixado (2.21.x, H-21, confirmado) com `-exclude-generated` e o arquivo de exceções do repositório; varredura do repositório que recusa a chave de teste do `secrettest` (bytes 0 a 31, em base64 e hex) fora de `*_test.go` e `testdata/` (confirmado, FDD 03) e qualquer texto `n3x-canary-` fora de teste; achado de severidade alta reprova
   - **Prazos:** job de PR com `timeout-minutes: 40` (meta p95 de 25 min); noturno 180 min por job; pré-release 330 min (o soak de 4 h cabe no limite de 6 h do runner hospedado)
 
 **Matriz** (o que roda, onde e quando; resposta ao HLD de plataforma)
@@ -528,7 +554,7 @@ imagens de build: n3x-e2e/sidecar-builder:dev-5c1e9a0b7d2f-envoy-1.40 (pin: core
 | `pr` | PR de qualquer repositório (`workflow_call`); PR do `n3x-sdk` em `deploy/**`, `example/**` ou código do SDK; PR `deploy/sync-<data>` do bot | repositório do PR de `code` mais estáveis | compose amd64 | 22 cenários com `pr` | status do job no PR |
 | `nightly` | 01:00 UTC; `workflow_dispatch`; `runtime-published` estável | `head`, `stable`, `n-1` (só `E2E-XV-01`) | compose amd64; compose arm64; kind amd64 (`min` só `E2E-ENV-03`, `latest` o resto); par amd64 e arm64 para `E2E-BLD-08` | tier `nightly`, mais `E2E-SOAK-01` em `stable` amd64 | issues, status `n3x-e2e/nightly` na `main`, PR de pares |
 | `prerelease` | `runtime-published` com `channel: prerelease`; `workflow_dispatch` com a tag candidata | candidata mais estáveis | compose amd64 e arm64; kind amd64 | tier `prerelease`, mais `E2E-SOAK-02` (4 h) | status `n3x-e2e/release` no commit, PR de pares |
-| `istio` | reservado (contrato 13) | `stable` e `head` | kind-istio amd64 | `E2E-IS-*` | definido pela FDD 49 |
+| `istio` | `prerelease` e noturno `stable` e `head` (contrato 13); nenhuma célula no `pr` | `stable` e `head` | kind-istio amd64 | `E2E-IS-*` (bloqueantes; conteúdo da FDD 49) | status `n3x-e2e/release`, issues |
 | `manual` | `workflow_dispatch` com `combo.json` | qualquer, inclusive `-rc` e alvo `candidate` | qualquer | `--only` livre | relatório |
 
 Linhas da matriz do HLD de plataforma e quem cobre: unitários, fuzzing e benchmarks de alocação ficam na CI de cada repositório; conformidade do SDK roda por PR com adaptador falso (FDD 17) e aqui no Envoy real à noite (`E2E-CNF-01`, I-06); build e carga do `.so` ficam na FDD 46, com `E2E-BLD-02` nas imagens publicadas; integração ponta a ponta e ambientes são desta FDD; `buf breaking` fica em cada repositório com proto; segurança combina o `security.yml` com `E2E-SEC-01`; carga e 500 sidecars são das FDDs 50 e 51; longa duração é desta FDD (L-41); candidatos do Envoy e do Istio entram como `-rc` publicada (FDD 46) e disparam o `prerelease`; ECS é manual (`MAN-02`).
@@ -563,8 +589,8 @@ security | govulncheck: 0 chamadas vulneráveis | gosec: 0 altas | segredos no r
 - Semântica:
   - **Manifesto:** `phases: [access]`, `default_phase: access`, `default_order: 10` (roda antes do `n3x.example` em `transform`), `default_failure: open`; `controller.required: false`; a política de cada instância vem do `n3x.yaml` (`failure: open` ou `closed`)
   - **Config da metade de proxy:** `token` (`plugin.Secret`, recebe o canário selado ou em claro, para `E2E-SEC-01` e `E2E-INV-03`), `trigger_header` (padrão `x-n3xtest-fault`), `dump_path` (padrão `/tmp/n3xtest/goroutines.txt`), `script` (roteiro opcional) e `connectors` (opcional: `http_url`, `redis_addr`, `postgres_dsn` como `plugin.Secret`, intervalo)
-  - **Gatilhos pelo header** (sem o header, `Continue` sem custo): `panic` (panic no hook), `panic-async` (panic dentro do `Go()`), `delay=<ms>` (`proxy.Sleep` no `Go()`, para estourar `async.timeout`), `fail` (`proxy.Fail`), `deny` (`proxy.Forbidden("teste")`), `dump-goroutines` (grava o perfil `goroutine` com `debug=2` em `dump_path` e segue). O valor do header é lido só com `strings.HasPrefix` e `strconv`, sem alocar no caminho sem header
-  - **Roteiro (`script`):** subconjunto do formato do `conformance.ScriptPlugin` da FDD 07, com os mesmos nomes de passo: `set`, `add`, `del`, `copy`, `deny`, `fail`, `panic`, `go`, `sleep`, por hook (`request_headers`, `response_headers`). O plugin não importa `sdktest/conformance` (proibido a código de plugin, FDD 24); a equivalência é provada no `go test` do próprio módulo, que roda os casos elegíveis de `conformance.Cases()` no `sdktest` trocando o `ScriptPlugin` pelo `n3xtest.faults` e exige o mesmo `Outcome` (hipótese H-09)
+  - **Gatilhos pelo header** (sem o header, `Continue` sem custo): `panic` (panic no hook), `panic-async` (panic dentro do `Go()`), `delay=<ms>` (`proxy.Sleep` no `Go()`, para estourar `async.timeout`), `fail` (`proxy.Fail`), `deny` (`proxy.Forbidden("teste")`, resposta 403 com corpo JSON `{"code":403,"message":"teste"}`), `dump-goroutines` (grava o perfil `goroutine` com `debug=2` em `dump_path` e segue). O valor do header é lido só com `strings.HasPrefix` e `strconv`, sem alocar no caminho sem header
+  - **Roteiro (`script`):** subconjunto do formato do `conformance.ScriptPlugin` da FDD 07, com os mesmos nomes de passo: `set`, `add`, `del`, `copy`, `deny`, `fail`, `panic`, `go`, `sleep`, por hook (`request_headers`, `response_headers`). O plugin não importa `sdktest/conformance` (proibido a código de plugin, FDD 24); a equivalência é provada no `go test` do próprio módulo, que roda os casos elegíveis de `conformance.Cases()` no `sdktest` trocando o `ScriptPlugin` pelo `n3xtest.faults` e exige o mesmo `Outcome` (H-09, confirmado)
   - **Tarefas de fundo:** `probe` a cada 5 s publica `n3x_n3xtest_faults_goroutines` (gauge, `runtime.NumGoroutine()` do processo, que tem um único runtime Go); com `connectors`, a tarefa `connectors` faz a cada `interval` um GET pelo `env.HTTPClient()`, um `PING` no Redis e um `SELECT 1` no Postgres, ambos por `env.Dial` (receitas da L-23), e conta `n3x_n3xtest_faults_connector_calls_total{kind,result}`
   - **Metade de controller:** página `/` com um `Stat` e um `Table` mínimos; `/panico` dá panic na função da página (`kind="panel"`), para o 5º panic em 60 s deixar o plugin `falho` (L-36, FDD 32); config `{}`
   - **Guardas contra vazamento (risco do ASSUNTO):** o módulo fica fora do `example/` e do molde do `n3x-new`; nunca tem tag (ruleset recusa `deploy/**`); entra só pelo proxy local nas imagens `n3x-e2e/*-e2e:<run>`, que levam o rótulo `io.n3x.e2e=true` e nunca saem do runner; um teste do e2e confere que `go list -m all` do `example/` e da árvore gerada pelo `n3x-new` não contém `deploy/e2e`
@@ -596,7 +622,9 @@ x-request-id: e2e-E2E-FLT-02-0001
 **Exemplo de resposta**
 ```text
 HTTP/1.1 503 Service Unavailable
-content-type: text/plain; charset=utf-8
+content-type: application/json; charset=utf-8
+
+{"code":503,"message":"<mensagem>"}
 
 n3x_plugin_panics_total{plugin="n3xtest.faults",instance="faults-closed"} 1
 ```
@@ -656,7 +684,8 @@ $ grpcurl -plaintext -d '{"id":"7"}' -H 'x-request-id: e2e-E2E-TRF-02-0004' loca
 - Assinatura/Rota: perfis `exemplo`, `standalone`, `e2e`, `fleet-key`, `fleet-nokey`, `invalid-missing`, `invalid-plugin`, `invalid-enc`, `degraded`, `n-1`, `ratelimit` e `soak`; patches em `deploy/e2e/config/<perfil>.patch.yaml` (merge de mapas, listas substituídas)
 - Método: processo; chama as imagens do combo com `docker run --rm` (`keygen`, `encrypt --key --service`, `encrypt --key --plugin`, `hash --cost 12`, `dev-cert`), como o `bootstrap.sh`
 - Semântica:
-  - **`exemplo`:** a saída do `bootstrap.sh` da FDD 47 sem nenhuma mudança, gerada uma vez por execução e reaproveitada pelo compose e pelo kind (`E2E-ENV-02`); o SHA-256 dela vai para o relatório
+  - **`exemplo`:** a saída do `bootstrap.sh` da FDD 47, gerada uma vez por execução e reaproveitada pelo compose e pelo kind (`E2E-ENV-02`), com o controller sempre no FQDN fixo `n3x-controller.n3x.svc.cluster.local:17443` (no compose, um alias de rede), o que torna o `n3x.yaml` idêntico byte a byte nas duas topologias; o SHA-256 dele vai para o relatório. A chave AES não é entregue por arquivo no host: no compose e no kind ela vai para um volume nomeado preenchido por um serviço inicial `n3x-files` (como root, dono 17000:17000, modo 0440); no ECS aceita-se como risco residual que o papel da task é compartilhado (FDD 15 do SDK, em fechamento). Os detalhes além disso seguem a FDD 15 do SDK
+  - **`fleet-*` e `n-1`:** usam o mesmo FQDN fixo do controller e a mesma entrega de chave por volume nomeado
   - **`standalone`:** o `sidecar.yaml` do `exemplo` sem o bloco `controller` (M2)
   - **`e2e`:** `app.protocol: "http2"` (ou `"grpc"` no `pedidos-pyg`); `plugins` igual ao fragmento `testdata/n3x/sidecar-plugins.yaml` da FDD 13 (`add-header` com `deny_path: /admin/` e `deny-grpc`), mais as instâncias `faults-open` e `faults-closed` do contrato 6; o `n3x.yaml` do controller com as seções do exemplo e do `n3xtest.faults` (I-03)
   - **Canários:** `n3x-e2e prepare --only secrets` gera um texto `n3x-canary-<uso>-<8 hex>` para o segredo de cada serviço, a senha do root, a do usuário `leitura`, a `hmac_key` (o base64 de 32 bytes do `keygen` é guardado como marcador) e o `token` do plugin de teste (uma instância selada, outra em claro, para `***:<12 hex>` e `***:plain`); grava `markers.json` (0600, nunca vai para artefato) com os textos, o conteúdo base64 das duas chaves AES e a carga de cada envelope gerado, que é a entrada de `secrettest.Leaks`
@@ -689,7 +718,7 @@ canários: 9 serviços, root, leitura, hmac_key, token (selado e em claro); mark
   - **Mesmo resultado:** para cada caso, o resultado normalizado tem `denied`, `status`, `grpc_status`, `grpc_message`, `trailers_only`, `body` (só em negação) e os `upstream_headers` pedidos pelo caso, lidos do eco; precisa ser igual ao `expect` de `cases.json` e igual entre Go e Python
   - **Compose do zero em 5 minutos (P-04 da FDD 47):** as imagens base são baixadas antes, fora do tempo; depois `docker buildx prune -af` e `docker compose down -v`; `t0` antes de `docker compose build`, `t1` quando `docker compose up -d --wait` sai com 0, com o `bootstrap.sh` no meio; limite 300 s num `ubuntu-24.04`; o relatório guarda as três parcelas
   - **Mesma imagem:** o digest do manifesto da imagem do sidecar usada no compose é o mesmo do `image:` aplicado no kind (registro local `localhost:5001`), conferido por `docker buildx imagetools inspect` e pelo `imageID` do pod
-  - **Longa duração (L-41):** amostras a cada 15 s; depois de 10 min de aquecimento, a inclinação da regressão linear de `n3x_n3xtest_faults_goroutines` fica até 0,5 goroutine por minuto e o valor final até 1,1 vez o valor do minuto 10 mais 20; `n3x_sidecar_go_memory_bytes` final e `memory.current` do cgroup do contêiner até 1,15 vez o do minuto 10; 0 reinício do contêiner, 0 erro fatal e 0 resposta inesperada (hipóteses, H-14)
+  - **Longa duração (L-41):** amostras a cada 15 s; depois de 10 min de aquecimento, a inclinação da regressão linear de `n3x_n3xtest_faults_goroutines` fica até 0,5 goroutine por minuto e o valor final até 1,1 vez o valor do minuto 10 mais 20; `n3x_sidecar_go_memory_bytes` final e `memory.current` do cgroup do contêiner até 1,15 vez o do minuto 10; 0 reinício do contêiner, 0 erro fatal e 0 resposta inesperada (H-14, confirmado). As goroutines medidas são as do processo do `.so` (pelo plugin de teste), não as do supervisor nem as do controller; "0 reinício do contêiner" vale só para o sidecar (no `E2E-SOAK-02` o controller reinicia de propósito)
 
 **Exemplo de requisição** (medida da volta, trecho de relatório)
 ```json
@@ -710,10 +739,10 @@ E2E-CTL-03 ok: 10/10 connected; mediana 6,25 s (limite 12 s), máximo 11,75 s (l
 - Semântica:
   - **Relatório:** `run` (id, tier, gatilho, URL, início e fim), `combo` (cópia do contrato 4, com digests), `env`, `arch`, `target`, `kubernetes`, `cells[]` e, por cenário, `id`, `app`, `result` (`ok`, `failed`, `flaky`, `skipped`, `quarantined`, `infra`), `attempts`, `duration_ms`, `measures`, `request_ids` das requisições que falharam e `artifacts`; `summary` com as contagens, `blocks_release_failed` e as medidas informativas (`n3x_plugin_duration_seconds` por hook, tempo até pronto do sidecar)
   - **Artefatos em falha (por cenário):** logs JSON de todos os contêineres (`docker compose logs --no-color --timestamps`, `kubectl logs --all-containers --previous`), separados por processo e indexados pelo `request_id` das requisições que falharam (correlação do ADR-009); snapshot de `/stats/prometheus` (17090) e `/metrics` (17091) no início e no momento da falha; perfil de goroutines do sidecar gravado pelo `n3xtest.faults` (`dump-goroutines`) quando a imagem `*-e2e` está em uso; `docker inspect` e `kubectl describe`; o `combo.json`; core dump do Envoy quando houver
-  - **Core dump:** só nas pilhas do e2e, que sobrepõem `ulimits: core: -1` (os exemplos da FDD 47 têm `core: 0`); o runner usa `kernel.core_pattern=/var/tmp/n3x-cores/core.%e.%p`; até 2 dumps por execução, comprimidos com zstd. Erro fatal do runtime Go no `.so` sai como texto no stderr do Envoy (a pilha fica no log); core dump de erro fatal Go exigiria `GOTRACEBACK=crash`, que o supervisor não passa (P-03)
-  - **Retenção (hipótese, H-17):** 14 dias no `pr`, 30 dias no `nightly`, 90 dias no `prerelease`; até 500 MiB por execução, com os logs cortados no fim de cada arquivo além de 50 MiB; `markers.json` e as chaves nunca entram
+  - **Core dump:** só nas pilhas do e2e, que sobrepõem `ulimits: core: -1` (os exemplos da FDD 47 têm `core: 0`); o runner usa `kernel.core_pattern=/var/tmp/n3x-cores/core.%e.%p`; até 2 dumps por execução, comprimidos com zstd. Erro fatal do runtime Go no `.so` sai como texto no stderr do Envoy (a pilha fica no log); o core dump de erro fatal Go exige `GOTRACEBACK=crash`, que o supervisor não passa hoje (P-03). Pedido ao sidecar (FDDs 25 a 30, outro repositório): um campo ou repasse ativável de `GOTRACEBACK=crash` nas imagens `*-e2e` e no soak, para gerar o core dump (PRD)
+  - **Retenção (H-17, confirmado):** 14 dias no `pr`, 30 dias no `nightly`, 90 dias no `prerelease`; até 500 MiB por execução, com os logs cortados no fim de cada arquivo além de 50 MiB; `markers.json` e as chaves nunca entram
   - **Alertas por issue:** só no `nightly` e no `prerelease`, uma issue por (rótulo, cenário, célula), comentada nas repetições e fechada depois de 3 execuções verdes seguidas (a mesma política da FDD 46, reaproveitando o `n3xci alert`, pedido à FDD 46); `E2E-GRPC-DENY` falho abre `e2e-grpc-deny` com prioridade crítica e menciona o mantenedor; falha de reprodutibilidade abre `reproducibility`
-  - **Painel:** a tabela do `GITHUB_STEP_SUMMARY` (cenário por célula) e uma issue fixada "Situação da CI cruzada" atualizada pelo noturno com a última matriz (hipótese)
+  - **Painel:** a tabela do `GITHUB_STEP_SUMMARY` (cenário por célula) e uma issue fixada "Situação da CI cruzada" atualizada pelo noturno com a última matriz (confirmado)
 
 **Exemplo de requisição**
 ```text
@@ -744,9 +773,9 @@ $ n3x-e2e report --in out/compose-amd64 --in out/compose-arm64 --in out/kind-amd
 - Assinatura/Rota: contextos `n3x-e2e/pr` (o próprio job), `n3x-e2e/nightly` e `n3x-e2e/release`; `n3x-e2e gate`; `n3x-e2e pairs --open-pr` (PR `compat/e2e-<data>` no `n3x-builder`)
 - Método: API de status do GitHub; PR do bot
 - Semântica:
-  - **`n3x-e2e/release`:** `success` só quando todos os cenários `blocks_release` da célula `prerelease` estão `ok` ou `flaky` em amd64 e arm64, com `E2E-GRPC-DENY` `ok` nas duas (um `flaky` no cenário da negação gRPC já vale `failure`, H-18); `failure` com o link do relatório no resto; `pending` enquanto roda
-  - **Portão:** os releases estáveis chamam `n3x-e2e gate` antes da tag: imagens pelo `gate` do `oci-publish.yml` da FDD 46 (pedido pendente na consolidação), módulos (`n3x-sdk`, `n3x-sdk/example`, `n3x-plugin-core`, `n3x-sidecar/core`, `n3x-controller/host`) pelo `release.yml` de cada repositório, único que pode criar tag pelo ruleset (H-19); sem `success`, saída 5 e nada é publicado
-  - **Roteiros manuais (`MAN-01` a `MAN-03`):** para tags do `n3x-sdk` que mudam `deploy/` ou `docs/`, o `gate` exige linha `passou` para a mesma tag em `docs/operador/roteiros/registro.md` (contrato 17 da FDD 47); o ECS (`MAN-02`) fica só aqui, nunca no automático
+  - **`n3x-e2e/release`:** `success` só quando todos os cenários `blocks_release` da célula `prerelease` estão `ok` ou `flaky` em amd64 e arm64, com `E2E-GRPC-DENY` `ok` nas duas (um `flaky` no cenário da negação gRPC já vale `failure`; H-18 deixa de ser hipótese para este cenário: `retries: 0` e `flaky` nunca aceito); `failure` com o link do relatório no resto; `pending` enquanto roda
+  - **Portão:** os releases estáveis chamam `n3x-e2e gate` antes da tag: imagens pelo `gate` do `oci-publish.yml` da FDD 46 (pedido pendente na consolidação), módulos (`n3x-sdk`, `n3x-sdk/example`, `n3x-plugin-core`, `n3x-sidecar/core`, `n3x-controller/host`) pelo `release.yml` de cada repositório, único que pode criar tag pelo ruleset (H-19, confirmado); sem `success`, saída 5 e nada é publicado. O `prerelease` para tags de `n3x-sidecar/core` e `n3x-controller/host` é pendência: o `e2e-dispatch` só lista `n3x-sdk` e `n3x-plugin-core`
+  - **Roteiros manuais (`MAN-01` a `MAN-03`):** para tags do `n3x-sdk` que mudam `deploy/`, `docs/operador/` ou `docs/autor/`, o `gate` exige linha `passou` para a mesma tag em `docs/operador/roteiros/registro.md` (contrato 17 da FDD 47); o ECS (`MAN-02`) fica só aqui, nunca no automático
   - **Pares `source: e2e` (I-03 da FDD 46):** a FDD 46 é dona do formato, do gerador do README e do teste de par mínimo. Depois de uma célula `stable` ou `prerelease` verde nas duas arquiteturas, `n3x-e2e pairs` escreve uma linha por (`kind`, `builder`, `runtime`) testada, no formato do contrato 11 da FDD 46, com `source: "e2e"`, `results.amd64` e `results.arm64` (`ok` ou `failed`), `rule` (o primeiro cenário `blocks_release` que falhou), `run` e `tested_at`; o bot abre o PR `compat/e2e-<data>` no `n3x-builder`, que segue a regra de merge automático de PR só com `compat/` da FDD 46. Linha falha também entra (o arquivo só cresce)
   - **`n3x-e2e/nightly`:** informativo nos commits da `main`; não bloqueia PR
 
@@ -777,10 +806,10 @@ saída 5
 - Assinatura/Rota: `{"format":1,"entries":[{"id","cells","issue","reason","until"}]}`
 - Método: n/a
 - Semântica:
-  - **Nova tentativa:** cada cenário com `retries: 1` roda de novo uma vez, do zero (estado da pilha refeito), quando falha; passou na segunda, `flaky`; falhou nas duas, `failed`. Nenhuma asserção individual é repetida, só o cenário inteiro
+  - **Nova tentativa:** cada cenário com `retries: 1` roda de novo uma vez, do zero (estado da pilha refeito), quando falha; passou na segunda, `flaky`; falhou nas duas, `failed`. Nenhuma asserção individual é repetida, só o cenário inteiro. `E2E-GRPC-DENY` tem `retries: 0` em todos os tiers: qualquer falha é `failed` e reprova PR, noturno e release
   - **Contagem:** o noturno conta `flaky` por cenário nas últimas 14 execuções; 3 ou mais abrem ou atualizam a issue `e2e-flaky` com as tentativas
   - **Quarentena:** só por PR que edita `quarantine.json`, com issue aberta e `until` em no máximo 14 dias; vencido o prazo, a entrada deixa de valer sozinha e o `catalog_test.go` reprova o arquivo até alguém tirar a linha; cenário com `quarantinable: false` (todos os `blocks_release`, inclusive `E2E-GRPC-DENY`) é recusado no arquivo
-  - **Instabilidade não esconde regressão:** `flaky` continua no relatório e no portão (contrato 11); o `n3x-e2e/release` aceita `flaky` em cenário bloqueante só uma vez por candidata, e nunca na negação gRPC (H-18)
+  - **Instabilidade não esconde regressão:** `flaky` continua no relatório e no portão (contrato 11); o `n3x-e2e/release` aceita `flaky` em cenário bloqueante só uma vez por candidata (onde fica o contador dessa conta é pendência), e nunca na negação gRPC (`retries: 0` e `flaky` nunca aceito; H-18 deixa de ser hipótese para este cenário)
   - **Medidas de tempo com ruído** (`E2E-ENV-01`, `E2E-CTL-03`, `E2E-CTL-04`, `E2E-CTL-06`): a segunda tentativa vale se a primeira passou do limite em até 20%; acima disso, `failed` direto
 
 **Exemplo de requisição**
@@ -797,28 +826,28 @@ quarantine.json: entries[1].id: E2E-GRPC-DENY não pode entrar em quarentena (bl
 
 ---
 
-**Contrato 13: cenários Istio (reservados à FDD 49)**
-- Tipo: entradas reservadas do catálogo, ambiente `kind-istio` e pilha `istio`
+**Contrato 13: cenários Istio (bloqueantes; conteúdo da FDD 49)**
+- Tipo: entradas do catálogo, ambiente `kind-istio` e pilha `istio`
 - Assinatura/Rota: `E2E-IS-01` a `E2E-IS-05`; `n3x-e2e run --env kind-istio`; pacote `scenarios/istio`; pilha a partir de `deploy/istio/` (FDD 47, contrato 9 dela)
 - Método: n/a
 - Semântica:
-  - **Reservado:** os IDs, o ambiente e o tier `istio` existem no catálogo com `reserved: true`; enquanto a FDD 49 não os definir, `plan` não gera célula `kind-istio` e o relatório mostra `skipped: reserved`
-  - **O que a FDD 49 precisa preencher** (pedido): o que cada `E2E-IS-*` prova, no mínimo a negação gRPC como `PERMISSION_DENIED` no `istio-1.31` (CA-04, bloqueia o release do alvo), os casos de `cases.json`, o panic contido, o replay de conformidade com o alvo `Istio131` e a drenagem do Istio; a versão do Istio no kind; o tier por patch do Istio (dispara com a `-rc` da imagem `istio-1.31`)
-  - **Regras que já valem:** os mesmos `combo.json`, `cases.json`, aplicações, plugin de teste, relatório e portão; nenhuma célula Istio no tier `pr` (custo, HLD de plataforma); a contingência do PRD (adiar o alvo `istio-1.31`) tira as células da matriz sem mexer no resto
+  - **Bloqueante na v1.0.0:** o Istio bloqueia a v1.0.0 (decisão da FDD 15 do SDK). Os IDs `E2E-IS-01` a `E2E-IS-05`, o ambiente `kind-istio` e o tier `istio` têm `blocks_release: true` no M4, no `prerelease` e no gate. Dependem da FDD 49 e do kind com Istio; enquanto a FDD 49 não definir o conteúdo, `plan` não gera a célula e o gate trata a ausência como pendência externa, não como verde
+  - **O que a FDD 49 precisa preencher** (pedido, pendência externa, sem casos novos inventados aqui): o que cada `E2E-IS-*` prova, no mínimo a negação gRPC como `PERMISSION_DENIED` no `istio-1.31` (CA-04), os casos de `cases.json`, o panic contido, o replay de conformidade com o alvo `Istio131` e a drenagem do Istio; a versão do Istio no kind; o tier por patch do Istio (dispara com a `-rc` da imagem `istio-1.31`)
+  - **Regras que já valem:** os mesmos `combo.json`, `cases.json`, aplicações, plugin de teste, relatório e portão; nenhuma célula Istio no tier `pr` (custo, HLD de plataforma). Se o alvo `istio-1.31` for adiado, isso é decisão registrada no PRD (contingência do PRD), não da CI, e tira as células da matriz sem mexer no resto
 
 **Exemplo de requisição**
 ```yaml
   - id: E2E-IS-01
     title: "Negação gRPC no istio-1.31 (definido pela FDD 49)"
     prd: [CA-04]
-    reserved: true
-    tiers: [istio]
+    blocks_release: true
+    tiers: [istio, prerelease]
     envs: [kind-istio]
 ```
 
 **Exemplo de resposta**
 ```text
-E2E-IS-01  skipped: reserved (FDD 49)
+E2E-IS-01  pendente: conteúdo da FDD 49 (bloqueante)
 ```
 
 ---
@@ -830,7 +859,7 @@ E2E-IS-01  skipped: reserved (FDD 49)
 | Condição | Tratamento | Observação |
 | --- | --- | --- |
 | Asserção de cenário falha | uma nova tentativa do cenário inteiro; `flaky` ou `failed`; artefatos coletados antes de derrubar a pilha | contrato 12 |
-| `E2E-GRPC-DENY` falha em qualquer célula | `failed` sem quarentena; issue `e2e-grpc-deny` crítica; `n3x-e2e/release` em `failure` | risco do PRD: release bloqueado |
+| `E2E-GRPC-DENY` falha em qualquer célula | `failed` sem nova tentativa (`retries: 0`) e sem quarentena; issue `e2e-grpc-deny` crítica; `n3x-e2e/release` em `failure` | risco do PRD: release bloqueado |
 | Docker Hub ou GHCR com limite, rede fora, runner sem disco | resultado `infra`, saída 3, uma nova tentativa do job; issue `e2e-infra` se repetir | nunca vira `success` |
 | Imagem publicada com digest diferente de `compat/images.json` | saída 4 (`digest_mismatch`) antes de subir qualquer pilha | a FDD 46 abre `registry` pela auditoria dela |
 | Nenhum par compatível para a candidata | saída 4 com a regra do ADR-001 do `n3x-builder` | plano recusado sem build |
@@ -838,7 +867,7 @@ E2E-IS-01  skipped: reserved (FDD 49)
 | Build do `.so` falha com `N3X-Bxxx` | `E2E-BLD-01` `failed` com o código e a regra do relatório do builder; os cenários dependentes `skipped` com o motivo | não é infraestrutura |
 | Pilha não fica `healthy` no prazo | cenário `failed` com `docker compose ps` e logs; a pilha é refeita uma vez | em kind, `kubectl describe` dos pods |
 | Contêiner sai com código inesperado | `failed`, com o código, o `N3X-Sxxx` lido do log e os últimos 200 eventos | `E2E-CFG-*` esperam códigos certos |
-| Fila do runner arm64 acima de 60 min | `skipped` (noturno) ou espera (pré-release) | o status `release` só sai com as duas arquiteturas |
+| Fila do runner arm64 acima de 60 min | `skipped` (noturno) ou espera com prazo (pré-release); se o prazo estourar, o mantenedor reexecuta | o status `release` só sai `success` com as duas arquiteturas, sem exceção |
 | Prazo do cenário estourado | `failed` com `timeout`; o perfil de goroutines do harness (`go test` com `-timeout`) vai para o artefato | prazo vem do catálogo |
 | Segredo encontrado por `Leaks` | `E2E-SEC-01` `failed` com o arquivo e a posição, nunca o valor | o relatório mostra só o nome do marcador |
 | Quarentena vencida ou proibida | `catalog_test.go` reprova o PR | contrato 12 |
@@ -846,14 +875,14 @@ E2E-IS-01  skipped: reserved (FDD 49)
 
 **Estratégias de resiliência**
 - **Timeouts:** todo passo com prazo (subida de pilha 180 s, cenário pelo catálogo, job pelo workflow); nenhuma espera sem limite
-- **Retries:** um por cenário (contrato 12) e um por job em `infra`; nenhum retry escondido dentro de uma asserção
+- **Retries:** um por cenário (contrato 12, exceto `E2E-GRPC-DENY`, com zero) e um por job em `infra`; nenhum retry escondido dentro de uma asserção
 - **Backoff:** consultas de estado a cada 100 ms ou 250 ms com prazo; baixa de imagem com 3 tentativas e espera de 5 s, 15 s e 45 s
 - **Isolamento:** cada cenário destrutivo (restart do controller, frota, inválidos) usa a própria pilha ou refaz a pilha antes do próximo; cenários que não mudam estado compartilham a pilha para caber no prazo
 
 **Política de fallback**
 - Não há fallback que transforme falha em sucesso: `infra` fica inconclusivo e o status do PR fica `error`; o mantenedor pode reexecutar, nunca forçar verde
 - Contingência do HLD de plataforma: se o custo da matriz passar do limite de uma pessoa, primeiro sai `E2E-CTL-06`, depois `E2E-CNF-02`, depois o kind `min`; nenhum cenário `blocks_release` sai sem mudar esta FDD
-- Contingência do PRD para o Istio: tirar as células `kind-istio` e entregar só o `envoy-1.40`
+- Sem contingência de CI para o Istio: os `E2E-IS-*` bloqueiam a v1.0.0. Adiar o alvo `istio-1.31` é decisão registrada no PRD (contingência do PRD), não da CI
 
 **Invariantes**
 - Um verde no portão sempre corresponde a um `combo.json` com digests e um relatório guardado
@@ -894,24 +923,25 @@ E2E-IS-01  skipped: reserved (FDD 49)
 | Runners `ubuntu-24.04` e `ubuntu-24.04-arm` | 4 vCPU, 16 GiB | hospedados, sem custo em repositório público (H-01 da FDD 46); sem runner próprio |
 | Docker Engine com BuildKit e buildx | 24 | o mesmo mínimo da FDD 47 (H-21 dela) |
 | Docker Compose | v2.20 | `up --wait`, `network_mode: service:` |
-| kind | v0.24 (hipótese) | registro local `localhost:5001`; nós `kindest/node` nas versões `min` e `latest` de `versions.json` |
+| kind | v0.24 (confirmado) | registro local `localhost:5001`; nós `kindest/node` nas versões `min` e `latest` de `versions.json` |
 | kubectl e kustomize | 1.29 e 5.x | `kustomize edit set image`; versões de `deploy/tools/tools.lock` (FDD 47) |
 | Go | 1.26 | módulos `deploy/e2e`, `plugins/faults` e `apps/eco` |
 | grpc-go e protobuf | os do `n3x-plugin-core` no combo | clientes de teste e a aplicação Go |
-| Python, grpcio, hypercorn | 3.12, 1.6x, 0.17 (hipótese) | `eco-py`, com hashes |
-| Redis e Postgres | 7.4 e 16 (hipótese) | só no perfil `soak`, por digest |
+| Python, grpcio, hypercorn | 3.12, 1.6x, 0.17 (confirmado) | `eco-py`, com hashes |
+| Redis e Postgres | 7.4 e 16 (confirmado) | só no perfil `soak`, por digest |
 | `n3x-load` (FDD 51) | o do `n3x-controller` do combo | `E2E-CTL-06`, `E2E-PNL-06`, `E2E-INV-04` |
 | Executor do axe (FDD 35, `ci/a11y`) | o do `n3x-controller` do combo | `E2E-PNL-07`, com a URL do controller do e2e |
-| `govulncheck` e `gosec` | v1.1.4 e 2.21.x (hipótese) | `security.yml` |
+| `govulncheck` e `gosec` | v1.1.4 e 2.21.x (confirmado) | `security.yml` |
 | Imagens N3X | as do `combo.json` | por digest, de `compat/images.json` (FDD 46) |
 
 **Pedidos de contrato a outras FDDs** (consolidados na seção 10 do checkpoint):
 - FDD 46: `images/Dockerfile` com `N3X_DEV_MODULES` e o proxy local; `n3xci release check` recusando imagem `io.n3x.dev` e versão `-e2e.`; `gate` do `oci-publish.yml` chamando `n3x-e2e gate`; `n3xci alert` executável por outro repositório; aceitar linhas `source: e2e` no PR `compat/e2e-<data>`
 - FDD 47: pastas e workflows novos no contrato 1; entrada `python` em `versions.json`; a `eco` com gRPC por adição
-- FDDs 07 e 12: campo de elegibilidade para o Envoy e o controller reais em `Case` (`Real bool`, hipótese de nome)
+- FDDs 07 e 12: campo de elegibilidade para o Envoy e o controller reais em `Case` (`Real bool`, nome confirmado; acréscimo ainda pendente nelas)
 - FDDs 28, 30, 36, 46 e o próprio SDK: alvo `make e2e-artifacts`; os cinco repositórios chamam `e2e.yml` e `security.yml` no PR
 - FDD 45: a exportação JSON da tabela de sidecars traz `instance` e `state` (sem IP), para medir a volta por instância
 - FDD 51: `n3x-load sim` com prefixo de serviço, contagem pequena, relatório da volta, registros grandes para o teto do core e `Register` com hash errado
+- FDDs 25 a 30 (sidecar, outro repositório): campo ou repasse ativável de `GOTRACEBACK=crash` nas imagens `*-e2e` e no soak, para gerar o core dump de erro fatal do Go (contrato 10, P-03)
 - FDD 49: preencher o contrato 13; FDD 50: reaproveitar `combo.json`, `harness/images` e as aplicações
 
 **Garantias de compatibilidade**
@@ -932,35 +962,35 @@ E2E-IS-01  skipped: reserved (FDD 49)
 | CA-01 serviço novo em compose em até 30 min só com a documentação | `MAN-01` (roteiro da FDD 47); `E2E-PNL-01` e `E2E-ENV-01` provam a parte automática | sim (portão do `n3x-sdk`) |
 | CA-02 mesma imagem e mesmo `n3x.yaml` em Kubernetes e compose na CI, ECS manual | `E2E-ENV-02`, `E2E-ENV-03`; `MAN-02` | sim |
 | CA-03 HTTP/1.1, HTTP/2 e gRPC em Go e Python com o mesmo resultado | `E2E-TRF-01` a `E2E-TRF-03` | sim |
-| CA-04 negação gRPC como `PERMISSION_DENIED` em `envoy-1.40` e `istio-1.31` | `E2E-GRPC-DENY`; `E2E-IS-01` (FDD 49, M5) | sim |
+| CA-04 negação gRPC como `PERMISSION_DENIED` em `envoy-1.40` e `istio-1.31` | `E2E-GRPC-DENY`; `E2E-IS-01` (conteúdo da FDD 49, bloqueante no M4) | sim |
 | CA-05 panic contido, 503 com `grpc-status` certo ou segue, `panics_total` mais 1 | `E2E-FLT-01`, `E2E-FLT-02` | sim |
-| CA-06 controller desligado sem erro; volta em até 30 s | `E2E-CTL-01` a `E2E-CTL-04` | sim |
+| CA-06 controller desligado sem erro; volta em até 30 s (até cerca de 200 serviços sem `session.hmac_key`) | `E2E-CTL-01` a `E2E-CTL-04` (frota de 10 sidecars em 5 serviços: só a parte até 30 s); dono da prova dos 200 serviços: FDD 51 (`n3x-load sim` com 200 serviços sem chave e restart do controller, ancorado pela paridade do `E2E-CTL-06`) | sim |
 | CA-07 `n3x.yaml` inválido impede a subida, aponta o campo, sem segredo | `E2E-CFG-01` a `E2E-CFG-03` | sim |
 | CA-08 rolling update sem requisição cortada | `E2E-DRN-01`, `E2E-DRN-02` | sim |
 | CA-09 `n3x-plugin build` falha com o código de cada cenário | FDDs 19 a 24 e 46 (dono); `E2E-BLD-01` só confere o caminho feliz | na FDD 46 |
 | CA-10 dois builds em máquinas diferentes com o mesmo hash | FDD 46 (4 combinações de host); `E2E-BLD-08` no Dockerfile do operador | sim |
 | CA-11 painel mostra os campos do sidecar e o diff de divergência | `E2E-PNL-01`, `E2E-INV-03` | sim |
 | CA-12 nenhuma tela altera config ou usuários; leitura 403 em usuários | `E2E-PNL-04`, `E2E-PNL-01` | sim |
-| CA-13 root e leitura do `n3x.yaml`, duplicado impede, 5 erros bloqueiam 15 min | `E2E-CFG-05`, `E2E-PNL-05`, `E2E-SEC-06` | sim |
+| CA-13 root e leitura do `n3x.yaml`, duplicado impede, 5 erros bloqueiam 15 min | `E2E-CFG-05`, `E2E-PNL-05`, `E2E-SEC-06` (prova o 429 com `Retry-After`; o desbloqueio após 15 min é lacuna registrada) | sim |
 | CA-14 login, logout e bloqueio no log sem segredo | `E2E-SEC-06`, `E2E-SEC-01` | sim |
 | CA-15 config canônica mascarada; hash errado dá `DATA_LOSS` e o painel mantém a última | `E2E-INV-03`, `E2E-INV-04`, `E2E-SEC-01` | sim |
 | CA-16 teto do core: banner, heartbeats aceitos, config nova `RESOURCE_EXHAUSTED` | `E2E-PNL-06` | sim |
-| CA-17 credencial inválida `UNAUTHENTICATED`, TLS 1.3, nenhum segredo | `E2E-SEC-01` a `E2E-SEC-04` | sim |
+| CA-17 credencial inválida `UNAUTHENTICATED`, TLS 1.3, nenhum segredo | `E2E-SEC-01` a `E2E-SEC-04` (a captura da config enviada ao controller é pendência) | sim |
 | CA-18 benchmark open-loop, ocioso e pronto em 5 s | FDD 50 (dono); tempo até pronto aqui só informativo | na FDD 50 |
 | CA-19 500 sidecars em 1 vCPU e 512 MB | FDD 51 (dono); `E2E-CTL-06` confere a paridade do simulador | na FDD 51 |
-| CA-20 os mesmos plugins geram `.so` para os dois alvos e cada imagem carrega | FDD 46 (build); `E2E-BLD-01`, `E2E-BLD-02`; `istio-1.31` em `E2E-IS-*` | sim |
-| CA-21 plugin novo pelo `n3x-new` aparece no painel com página e cartão | `E2E-BLD-06`; `MAN-03` | sim |
+| CA-20 os mesmos plugins geram `.so` para os dois alvos e cada imagem carrega | FDD 46 (build); `E2E-BLD-01`, `E2E-BLD-02`; `istio-1.31` em `E2E-IS-*` (FDD 49) | sim |
+| CA-21 plugin novo pelo `n3x-new` aparece no painel com página e cartão | `E2E-BLD-06` (4 combinações do molde); `MAN-03` | sim |
 | CA-22 painel sem violação WCAG AA | `E2E-PNL-07` (e o job `panel-a11y` da FDD 35 por PR) | sim |
 
 **Marcos**
 - **M2 (regressão):** `E2E-M2` verde em todo PR, com o `.so` do `n3x-plugin build` do combo, alvo `envoy-1.40` e amd64; o marco continua fechado pela FDD 29
 - **M3 (de ponta a ponta):** `E2E-PNL-01` verde em compose com o core real, o agente real e o controller real (o mesmo critério que a FDD 45 provou com `ctrltest.Link`), mais `E2E-PNL-05` (root e leitura entram)
-- **M4 (fechado aqui):** (1) as quatro imagens publicadas no GHCR para amd64 e arm64, registradas em `compat/images.json`; (2) três execuções noturnas seguidas da combinação `stable` com todos os cenários `blocks_release` verdes em compose amd64, compose arm64 e kind amd64; (3) um `prerelease` verde com `E2E-SOAK-02`; (4) o `deploy.yml` da FDD 47 verde na mesma tag; (5) as linhas `source: e2e` publicadas no README do `n3x-builder`; (6) `MAN-01` a `MAN-03` com `passou` no `registro.md`; (7) o tier `pr` ligado como status obrigatório nos cinco repositórios
+- **M4 (fechado aqui):** (1) as quatro imagens publicadas no GHCR para amd64 e arm64, registradas em `compat/images.json`; (2) três execuções noturnas seguidas da combinação `stable` com todos os cenários `blocks_release` verdes (inclusive `E2E-IS-*` em `kind-istio` amd64, conteúdo da FDD 49) em compose amd64, compose arm64 e kind amd64; a negação gRPC tem o critério adicional de 30 noites (critérios técnicos); (3) um `prerelease` verde com `E2E-SOAK-02`, nas duas arquiteturas e com `E2E-IS-*`; (4) o `deploy.yml` da FDD 47 verde na mesma tag; (5) as linhas `source: e2e` publicadas no README do `n3x-builder`; (6) `MAN-01` a `MAN-03` com `passou` no `registro.md`; (7) o tier `pr` ligado como status obrigatório nos cinco repositórios
 
 **Critérios técnicos desta FDD**
-- O catálogo tem os 70 cenários da tabela do contrato 2 (65 automáticos e 5 reservados ao Istio) e os 3 manuais; `catalog_test.go` confere a ligação um a um com os subtestes e recusa cenário `blocks_release` quarentenável
+- O catálogo tem os cenários da tabela do contrato 2 (automáticos, os 5 do Istio com conteúdo da FDD 49 e `E2E-TRF-04` como `removed: true`) e os 3 manuais; `catalog_test.go` confere a ligação um a um com os subtestes e recusa cenário `blocks_release` quarentenável
 - Os 53 pedidos da tabela da seção 1 têm cenário ou contrato; nenhum sem destino
-- `E2E-GRPC-DENY` verde em 30 noites seguidas em compose amd64, compose arm64 e kind amd64 antes do M4, nas duas linguagens, com 0 chamada recebida pela aplicação e 0 observação de `grpc-status: 0`
+- 3 noites seguidas para todos os bloqueantes no M4 (marco 2) e, como critério adicional, `E2E-GRPC-DENY` verde em 30 noites seguidas em compose amd64, compose arm64 e kind amd64 antes do M4, com `retries: 0`, nas duas linguagens, com 0 chamada recebida pela aplicação e 0 observação de `grpc-status: 0`
 - Tier `pr` em até 25 min no p95 das últimas 30 execuções e em até 40 min no pior caso; noturno completo em até 3 h de relógio
 - Taxa de `flaky` abaixo de 2% dos cenários-célula nas últimas 14 noites; nenhum cenário com mais de 3 `flaky` em 14 noites sem issue
 - `E2E-ENV-01` em até 300 s em 9 de 10 execuções seguidas no `ubuntu-24.04`
@@ -968,9 +998,9 @@ E2E-IS-01  skipped: reserved (FDD 49)
 - `E2E-CTL-03` com mediana até 12 s e máximo até 30 s; `E2E-CTL-04` com máximo até 30 s e no máximo 5 bcrypt (um por serviço)
 - `E2E-SEC-01` com 0 achado numa noite completa; uma injeção de teste (marcador escrito de propósito num log de cenário de controle) é encontrada com o arquivo e a linha, sem o valor no relatório
 - `E2E-SOAK-02` (4 h) dentro dos limites do contrato 9 num `prerelease` antes do M4
-- O plugin `n3xtest.faults` passa na análise estática da FDD 24 sem exceção; o teste de equivalência do roteiro com o `conformance.ScriptPlugin` passa em todos os casos elegíveis; `go list -m all` do `example/` e da árvore gerada pelo `n3x-new` não citam `deploy/e2e`
+- O plugin `n3xtest.faults` passa na análise estática da FDD 24 sem exceção; o teste de equivalência do roteiro com o `conformance.ScriptPlugin` passa em todos os casos elegíveis; `go list -m all` do `example/` e da árvore gerada pelo `n3x-new` não citam `deploy/e2e`; o molde gerado pelo `n3x-new` é testado nas quatro combinações (proxy; controller; duas metades; duas metades com `--no-proto`, CA-21)
 - Um PR coordenado com `n3x-e2e: <repo>#<pr>` usa o head do outro PR (teste do `plan` com dois repositórios de `code`)
-- `n3x-e2e gate` recusa com saída 5 um commit sem `n3x-e2e/release`, com `failure`, ou com `flaky` em `E2E-GRPC-DENY`; aceita com `success`
+- `n3x-e2e gate` recusa com saída 5 um commit sem `n3x-e2e/release`, com `failure`, ou com `flaky` em `E2E-GRPC-DENY` (retries 0, `flaky` nunca aceito); aceita com `success`
 - Uma linha `source: e2e` aberta pelo bot passa na CI do `n3x-builder` e aparece no README gerado pela FDD 46
 - Toda falha de cenário deixa no artefato os logs por processo, os dois snapshots de métricas, o `combo.json` e, nas pilhas `*-e2e`, o perfil de goroutines
 - Nenhum travessão nos documentos e relatórios gerados (lint de Markdown da FDD 47)
@@ -988,7 +1018,7 @@ E2E-IS-01  skipped: reserved (FDD 49)
     - Um harness, um catálogo e um relatório para os cinco repositórios, chamados por workflow reutilizável com SHA fixado
     - Pilhas compartilhadas entre cenários que não mudam estado; cenários destrutivos agrupados
     - Reaproveitar o `n3xci alert` da FDD 46, o `n3x-load` da FDD 51 e o executor do axe da FDD 35, sem reescrever
-- **Plano de contingência:** ordem de corte da seção 6 (paridade do simulador, replay do host, kind `min`); adiar o Istio (PRD)
+- **Plano de contingência:** ordem de corte da seção 6 (paridade do simulador, replay do host, kind `min`); o Istio não é cortável pela CI (bloqueia a v1.0.0; adiar o alvo `istio-1.31` é decisão registrada no PRD)
 
 ### Versões desencontradas entre os cinco repositórios
 
@@ -1038,7 +1068,7 @@ E2E-IS-01  skipped: reserved (FDD 49)
 - **Mitigação:**
     - arm64 só à noite e no pré-release; espera com prazo e relato `skipped` no noturno
     - Mesmos runners da FDD 46 (`ubuntu-24.04-arm`), sem QEMU
-- **Plano de contingência:** release manual autorizado pelo mantenedor só com a célula arm64 de uma noite verde da mesma candidata, registrado no relatório
+- **Plano de contingência:** o `prerelease` espera o runner arm64 com prazo; se estourar, o mantenedor reexecuta. O status só sai `success` com as duas arquiteturas; não há release manual com a célula arm64 de uma noite (nunca forçar verde)
 
 ### Token do bot com permissão demais
 
@@ -1055,7 +1085,7 @@ E2E-IS-01  skipped: reserved (FDD 49)
 - **Probabilidade:** baixa
 - **Impacto:** `E2E-SOAK-02` cortado pelo limite de 6 h do job e o vazamento de goroutines passa sem detecção
 - **Mitigação:**
-    - 4 h dentro de um job de 330 min, com a pilha já construída no job anterior
+    - 4 h dentro de um job de 330 min, com a pilha já construída no job anterior e transportada por artefato `docker save`; o soak mede as goroutines do processo do `.so` pelo plugin de teste
     - Noturno de 60 min com os mesmos critérios, para tendência
 - **Plano de contingência:** dividir em duas janelas de 2 h com o mesmo processo de pé (`--keep` entre jobs não é possível no hospedado, então a contingência é a máquina `n3x-perf` da FDD 51, se o mantenedor aprovar)
 

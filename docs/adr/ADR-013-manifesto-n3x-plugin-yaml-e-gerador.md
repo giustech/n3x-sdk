@@ -1,6 +1,6 @@
 # ADR-013: Manifesto `n3x-plugin.yaml` e gerador `n3x-new`
 
-Status: Aceito
+Status: Aceito (atualizado em 2026-10-22)
 Data: 2026-10-19
 
 ## Contexto
@@ -23,3 +23,12 @@ O PRD chamava de `n3x.yaml` três arquivos diferentes: a config do serviço, a c
 
 ## Requisitos relacionados
 FR-014 e FR-015.
+
+## Atualização (2026-10-22)
+Alinhamento com a clarificação das FDDs SDK-01 a SDK-16. O corpo acima foi mantido; o que mudou:
+- O gerador trata nove formas de ID; a menção a "cinco lugares" foi substituída.
+- A faixa `sdk` tem gramática restrita: `>=X.Y.Z <A.B.C`, sem `^`, `~` nem `||`, sem atravessar major e, na série 0, sem atravessar minor.
+- `n3x-new` aceita `--no-proto` e copia o `LICENSE` Apache 2.0 por padrão (`--license none` desliga).
+- `schema-check --against latest` compara com a maior tag menor ou igual à versão atual (a anterior, se a tag igual aponta para o HEAD).
+- O molde é testado em quatro combinações.
+- Família de erros `N3X-N001..N013` do gerador (pendência: registrar no PRD/HLD).

@@ -27,7 +27,7 @@ Esta entrevista achou seis problemas novos:
 - **Login do core no teste ligado.** O falso da visão `Sidecar` (FDD 07) usa um canário aleatório como `controller.secret`. Sem o host falso conhecer esse segredo, o login do core nunca passaria num teste com as duas metades.
 - **Forma dos vetores de paridade.** A FDD 08 previu "vetores publicados pelo kit e rodados pelo host", sem dizer a forma nem como o host real, com relógio real e TLS, roda os mesmos casos.
 
-**Encaixe no HLD.** Esta FDD especifica a metade de controller do kit de testes do módulo `github.com/giustech/n3x-sdk` (HLD do `n3x-sdk`: linha `sdktest/` de "Componentes e responsabilidades" e tabela "Kit de testes", peças `NewHost` e `bufconn`) e cria três pacotes (nomes e divisão são hipótese):
+**Encaixe no HLD.** Esta FDD especifica a metade de controller do kit de testes do módulo `github.com/giustech/n3x-sdk` (HLD do `n3x-sdk`: linha `sdktest/` de "Componentes e responsabilidades" e tabela "Kit de testes", peças `NewHost` e `bufconn`) e cria três pacotes (nomes e divisão confirmados):
 
 - `sdktest/ctrltest`: o host falso, o `bufconn`, os falsos do lado controller das capacidades privilegiadas e as asserções. Fica num subpacote (pedido da FDD 07, P-04) para um plugin só de proxy testar sem compilar `controller/` nem o renderizador
 - `sdktest/hostconformance`: as suítes de conformidade do host, com harness, rodadas pelo kit e pelo `n3x-controller`
@@ -52,7 +52,7 @@ Acrescenta ainda ao pacote `sdktest` (FDD 07) o agendador compartilhado entre os
 - Go 1.26 ou superior (ADR-021); `net/http.ServeMux` com padrões `{nome}` (Go 1.22)
 - O pacote `google.golang.org/grpc/test/bufconn` do grpc-go continua disponível na versão do `go.mod` do SDK
 - O kit de proxy (FDD 07) já tem agendador, relógio falso, rede falsa, captura de logs, checagem de segredos, faltas e a opção `WithController`, e o motor do agendador mora num pacote interno do módulo que o `ctrltest` também pode usar
-- `runtime/debug.ReadBuildInfo` devolve, num binário de `go test`, o módulo principal igual ao do pacote testado (hipótese herdada das FDDs 07 e 09; conferida por critério de aceite, seção 9)
+- `runtime/debug.ReadBuildInfo` devolve, num binário de `go test`, o módulo principal igual ao do pacote testado (confirmado, herdado das FDDs 07 e 09; o spike que confere isso fica como pendência registrada e é conferido por critério de aceite, seção 9)
 - Plugins bloqueiam só por primitivas do SDK (`ctrl.Sleep`, `env.Dial`, clientes do SDK, conexões do kit), como exigem as FDDs 06 e 24; é nessa condição que o determinismo é pleno
 
 **Restrições**
@@ -92,18 +92,31 @@ Acrescenta ainda ao pacote `sdktest` (FDD 07) o agendador compartilhado entre os
   - FDD 24: as APIs só de runtime criadas aqui ficam em pacotes que a análise estática proíbe por import (pedido na seção 8)
   - FDD 37: o falso da visão `proxy.Sidecar` ganha `SetConfigHash` e guarda o último valor para o teste conferir (acréscimos ao `sdktest`, contrato 6)
 
+**Decisões aprovadas na clarificação**
+- `Runtime.CoreEnv()` (casos positivos de `RunCoreEnv` sem o core real): o ponto de injeção que entrega `CoreEnv` a um plugin de teste que não é o core existe só em arquivos `_test.go` do `n3x-controller`, ligado ao harness; nenhum código de produção nem opção concede `CoreEnv` a quem não é o core (ADR-019); os casos rodam nos dois harnesses (kit e host real) e o seam de teste é revisado como critério de aceite das FDDs 32 e 33 (outro repositório)
+- A FDD 12 passa a refletir as decisões da FDD 11 (exportação só root por padrão, 403 para leitura, `External` fora da v1) e da FDD 10 (`list_truncated`)
+- Os pacotes novos `sdktest/ctrltest`, `sdktest/hostconformance` e `controller/hostrules` (e o plugin interno `denycount`) devem constar no HLD/ADR-011; o HLD cita `sdktest.NewHost`, mas a FDD usa `ctrltest.NewHost`
+- As demais hipóteses numéricas, de teste e de baixo risco ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Tornar explícito em `Link` como a instância (`pedidos-0`) é informada ao `NewProxy` e o que ocorre quando serviço ou instância divergem (Fatal, aviso ou login que falha)
+- Os rótulos `P-xx` e `I-xx` são reutilizados com sentidos diferentes (`P-04` na FDD 07 e na FDD 35; `P-10` na FDD 09 e na FDD 31; `I-02` a `I-04` sem definição): definir ou trocar por referência às FDDs
+- Mover `DefaultShutdownTimeout` e `DefaultRefreshInterval` de `ctrltest` para `ctrl` ou `hostrules`; alinhar a tolerância de desligamento (2 s versus 2,1 s da FDD 08); dizer que os plugins de teste `a`, `b` e `c` implementam `PluginAPI` na ordem de `Lifecycle`; registrar no `RunLifecycle` que `capability_pointer_receiver` reprova no kit mas o host real não reprova
+- Dependem de outros repositórios: FDDs 32 a 35 (uso de `hostrules` e do harness; seam `_test.go` do `CoreEnv`), 33 (teto de 1 s por mensagem, x-forwarded-for), 35 (503 de `falho`, ordem de `Overview`, métricas do painel), 31, 22, 37, 42, 24 (lista F2 com `hostrules`), 13, 14, 36 a 45, 48 e o `n3x-plugin-core` (casos `WithCore`)
+- Divergências para o Workflow 3: `DialDenyList` do controller (FDD 06/07 dizem lista vazia; FDD 08 nega 17091, 17443 e 17444: o runtime do controller entrega a lista); HLD marco M1 (core ponta a ponta) versus a contingência de adiar `PanelLogin`, `AssertGolden`, `RunPanel` e `RunCoreEnv` com `WithCore`
+
 ---
 
 ### 2. Objetivos técnicos
 
 - **Mesmas recusas do host real por construção.** Invariante: o host falso usa o `ctrl.Registrar`, o `ctrl.StateCell`, `ctrl.CheckPrivileged`, `ctrl.CapabilitiesOf`, o renderizador e `ui.ReadSubmission` reais. Medida: 100% dos exemplos de recusa das FDDs 08, 09 e 11 (registro fora do namespace, rota fora do prefixo, papel inválido, privilégio fora do core, tabela pública) produzem no kit o mesmo `Path`, a mesma `Rule` e o mesmo texto do `Registrar.Close()`, prefixados com `plugins["<id>"]`.
-- **Paridade verificada com o host real.** Medida: as suítes de `hostconformance` (no mínimo 79 casos) passam no harness do kit e são critério de aceite das FDDs 32 a 35 no harness do `n3x-controller`; as decisões de ordem, efeito de falha, status de página, falha de cartão, modo do painel e entrega do aviso existem só em `controller/hostrules` (busca na CI do SDK e revisão no controller).
+- **Paridade verificada com o host real.** Medida: as suítes de `hostconformance` (no mínimo 81 casos) passam no harness do kit e são critério de aceite das FDDs 32 a 35 no harness do `n3x-controller`; as decisões de ordem, efeito de falha, status de página, falha de cartão, modo do painel e entrega do aviso existem só em `controller/hostrules` (busca na CI do SDK e revisão no controller).
 - **Prazos exatos no relógio falso.** Medida: `Start` que ignora o `ctx` vira falha exatamente em 30 s falsos; página presa dá 504 em exatamente 10 s falsos; cartão preso fica "indisponível" em exatamente 1 s falso; `Stop` preso é abandonado em 5 s falsos; cada caso em menos de 300 ms de tempo real, em 100 de 100 execuções.
 - **Duas metades no mesmo teste, sem espera real.** Medida: um stream bidirecional de 100 mensagens pelo `bufconn`, conduzido por uma tarefa de fundo da metade de proxy com `Advance`, termina em menos de 500 ms de tempo real e sem nenhuma goroutine marcada como opaca.
 - **Erro de produção vira falha de teste.** Invariante: panic contido, violação de contrato, árvore inválida, destino de envio sem rota, `AllowRead` incoerente, plugin opcional `falho` sem `AllowFailed`, goroutine zumbi, uso indevido de métrica e segredo na saída reprovam o teste com mensagem que cita o plugin e a chamada. Medida: 100% dos casos de referência da seção 9 reprovam com a mensagem esperada.
 - **Nenhum segredo na saída.** Invariante: logs, rótulos de métrica, textos de erro (inclusive da `Validate`), mensagens de status gRPC, HTML, cartões, arquivos exportados, avisos e motivos de estado são varridos atrás dos valores de segredo da config e do prefixo `n3x-canary-`; achado reprova sempre (ADR-020).
 - **Privilégio só para a origem do core.** Invariante: `env.(ctrl.CoreEnv)` é falso para todo plugin que não é `n3x.core` do módulo oficial; não existe opção que libere privilégio para outro tipo. Medida: os 5 privilégios de controller da FDD 09 recusados com o `Path` do contrato 2 dela; `AsCore()` com tipo declarado fora do módulo do core recusado com `privileged_origin`.
-- **Custo baixo.** Medida: `NewHost` com um plugin de 3 páginas e 2 cartões em menos de 20 ms de tempo real; 1.000 chamadas de `Page` a uma página com tabela de 50 linhas em menos de 1 s sem `-race` e menos de 10 s com `-race`, no runner da CI (hipótese de tempos, igual à FDD 07).
+- **Custo baixo.** Medida: `NewHost` com um plugin de 3 páginas e 2 cartões em menos de 20 ms de tempo real; 1.000 chamadas de `Page` a uma página com tabela de 50 linhas em menos de 1 s sem `-race` e menos de 10 s com `-race`, no runner da CI (tempos confirmados, iguais aos da FDD 07).
 
 ---
 
@@ -134,7 +147,7 @@ Acrescenta ainda ao pacote `sdktest` (FDD 07) o agendador compartilhado entre os
 - Layout do painel (`<head>`, menu e banner renderizados): o kit devolve o conteúdo do plugin e os dados de menu e banner, não o HTML do host
 - Métricas e logs do painel propostos pela FDD 11 (`n3x_controller_panel_actions_total` e outros): simulados só depois que a FDD 35 confirmar os nomes (P-04)
 - Teto de 1 s por mensagem em stream gRPC: simulado só depois que a FDD 33 definir a semântica (P-02)
-- Fora da v1 (hipótese): dump estável da árvore de widgets para golden, fuzzing de envio pelo kit, TLS no `bufconn`, simulação de `x-forwarded-for`
+- Fora da v1 (confirmado): dump estável da árvore de widgets para golden, fuzzing de envio pelo kit, TLS no `bufconn`, simulação de `x-forwarded-for`
 
 ---
 
@@ -164,7 +177,7 @@ Acrescenta ainda ao pacote `sdktest` (FDD 07) o agendador compartilhado entre os
 **Fluxo de uma página (`Page`)**
 1. O kit separa path e query, limita a query bruta a 4 KiB (400 acima, FDD 08) e acha o padrão GET no `ServeMux` do plugin (sem padrão: 404; padrão só de ação: 405).
 2. Sessão falsa do chamador (`As`, padrão `Read(DefaultReader)`); com `SessionExpired`, responde 303 para `/login?next=<path e query>` (página) ou `HX-Redirect` (polling).
-3. Papel: `Caller.Role.Meets(papel da rota)`; sem papel, 403.
+3. Papel: `Caller.Role.Meets(papel da rota)`; sem papel, 403. Na exportação (chave `<id>.export`), o papel exigido é root, salvo `Table.ExportAllowRead` (FDD 11): leitura sem `ExportAllowRead` recebe 403 com "Esta exportação exige o papel root." e `panel_action_refused` com `reason=forbidden`.
 4. `ui.NewQuery(curingas, valores)`; fora dos limites, 400.
 5. `PageFunc` numa goroutine rastreada, sob `recover`, com `ctx` de `CallTimeout` no relógio falso, `request_id` novo e `Caller`; o kit avança o relógio só o necessário para ela terminar.
 6. Status por `hostrules.HandlerStatus` (`ErrNotFound` 404, `ErrBadRequest` 400, prazo 504, outro erro, panic ou `(nil, nil)` 500); erro e panic geram `page_failed` e `plugin_panic` como o host.
@@ -222,7 +235,7 @@ Acrescenta ainda ao pacote `sdktest` (FDD 07) o agendador compartilhado entre os
 4. Varredura de segredos em toda a saída capturada e relato das faltas pendentes; devolve o `ShutdownReport`.
 
 **Fluxos alternativos e exceções**
-- **Plugin opcional com `Start` falhando:** com `AllowFailed`, fica `falho`, sem `Start` repetido, sem registros e sem `Stop`; páginas dele dão 503 (hipótese, P-04), chamadas gRPC dão `UNAVAILABLE`, `Dependency` dá `ErrDependencyFailed`, o banner aparece com o motivo
+- **Plugin opcional com `Start` falhando:** com `AllowFailed`, fica `falho`, sem `Start` repetido, sem registros e sem `Stop`; páginas dele dão 503 (confirmado; a FDD 35 ainda confere, P-04), chamadas gRPC dão `UNAVAILABLE`, `Dependency` dá `ErrDependencyFailed`, o banner aparece com o motivo
 - **Plugin obrigatório com `Start` falhando:** a subida aborta, os que já tinham subido recebem `Stop` em ordem inversa e `NewHost` reprova (`ExpectNewError` devolve `StartupError` com `Stage` igual a `start`)
 - **Registro fora do namespace ou da rota, mesmo em opcional:** aborta, com a mesma mensagem do `Registrar.Close()` prefixada (FDD 08)
 - **`HostValidator` em plugin que não é o core:** aborta na fase de config com `privileged_capability` em `privileged.host_validator`
@@ -407,7 +420,7 @@ stateDiagram-v2
       DefaultRefreshInterval = 5 * time.Second
   )
 
-  // Destinos negados ao Dial da metade de controller: portas do próprio controller (FDD 08, hipótese).
+  // Destinos negados ao Dial da metade de controller: portas do próprio controller (FDD 08, confirmado).
   var DefaultDialDeny = proxy.DialDenyList{LoopbackPorts: []int{17091, 17443, 17444}}
   ```
 - Método: n/a (chamada local no teste)
@@ -415,8 +428,8 @@ stateDiagram-v2
   - **Mesmas regras do host real:** fases, ordem e efeitos da seção 4, com o `Registrar`, o `StateCell`, `CheckPrivileged` e `hostrules` reais; o texto do erro é o mesmo do `Registrar.Close()` e do `CheckPrivileged`, prefixado com `plugins["<id>"]`
   - **Config:** JSON ou YAML (`yamlconv`); vazio é seção ausente. Decodificada sem abrir `ENC[...]`: o texto do segredo é o valor (FDD 03)
   - **Origem e privilégios:** o módulo vem de `Module` ou do módulo principal de `debug.ReadBuildInfo`; `AsCore()` só troca o par (ID, módulo) que o builder gravaria; a regra do tipo dinâmico da FDD 09 continua, então só um tipo declarado em `github.com/giustech/n3x-plugin-core` ganha privilégio. Sem build info, o módulo fica vazio e o core é recusado com `privileged_origin` (mesma regra da FDD 07)
-  - **Core:** criado primeiro; `CheckHost` com `HostFacts{RootUser: RootName}`; recebe o `ctrl.CoreEnv` falso (contrato 9). O kit não acrescenta o core sozinho: quem quer o core no teste o põe em `NewHostWith` (hipótese, igual à FDD 07)
-  - **Plugin `falho` na subida:** reprova sem `AllowFailed` (problema novo 3 da seção 1; hipótese)
+  - **Core:** criado primeiro; `CheckHost` com `HostFacts{RootUser: RootName}`; recebe o `ctrl.CoreEnv` falso (contrato 9). O kit não acrescenta o core sozinho: quem quer o core no teste o põe em `NewHostWith` (confirmado, igual à FDD 07)
+  - **Plugin `falho` na subida:** reprova sem `AllowFailed` (problema novo 3 da seção 1; confirmado)
   - **Receptor ponteiro:** instância por valor que perde capacidades declaradas com receptor ponteiro reprova com `capability_pointer_receiver` (pedido da FDD 08)
   - **Concorrência:** `*Host` é seguro entre goroutines; `Overview` chama os cartões em paralelo
   - **`WithScheduler`:** com agendador compartilhado, `StartTime`, `SettleWindow` e `Jitter` vêm dele; passar as duas coisas reprova com `Fatal`
@@ -475,12 +488,12 @@ func TestStartOpcionalFalha(t *testing.T) {
   func CSRF(token string) CallOption        // troca o token enviado no Submit
   func NoCSRF() CallOption                  // envia sem _csrf
 
-  var DefaultPeerIP = netip.MustParseAddr("192.0.2.10") // TEST-NET-1, RFC 5737 (hipótese)
+  var DefaultPeerIP = netip.MustParseAddr("192.0.2.10") // TEST-NET-1, RFC 5737 (confirmado)
   ```
 - Método: n/a
 - Semântica:
   - Os construtores devolvem `ctrl.Identity` válidas (`Valid()` verdadeiro); usuário ou serviço vazios fazem panic com mensagem `ctrltest:`
-  - Chamador padrão de página, cartão e envio: `Read(DefaultReader)` (menor privilégio, para o teste mostrar quando uma tela exige root; hipótese)
+  - Chamador padrão de página, cartão e envio: `Read(DefaultReader)` (menor privilégio, para o teste mostrar quando uma tela exige root; confirmado)
   - Identidade padrão da conexão: `Sidecar(sdktest.DefaultService, "sdktest-0")`, igual à `sdktest.DefaultSidecarIdentity` da FDD 07
   - O kit cria uma sessão falsa por identidade de painel, com token CSRF determinístico `sdktest-csrf-<16 hex do contador>` (formato aceito pela FDD 11)
   - A identidade de `As` numa conexão vale só no host sem core; com o core, a identidade vem do `Authenticate` (seção 4)
@@ -512,7 +525,7 @@ conn := h.Dial(ctrltest.As(ctrltest.Sidecar("pedidos", "pedidos-7d9f-xk2lp")), c
   func (h *Host) For(id string) *PluginView // outro plugin do host; contrato 8
 
   type PageResult struct{ /* cópia; válido depois da chamada */ }
-  func (r *PageResult) Status() int               // 200, 303, 400, 403, 404, 405, 422, 500, 503 ou 504
+  func (r *PageResult) Status() int               // 200, 303, 400, 403 (inclusive exportação por leitura sem ExportAllowRead), 404, 405, 422, 500, 503 ou 504
   func (r *PageResult) Mode() ui.Mode             // ModePage, ModeFragment ou ModeExport
   func (r *PageResult) Tree() ui.Widget           // árvore devolvida pela PageFunc; nil sem árvore
   func (r *PageResult) Body() []byte              // HTML do conteúdo (sem layout) ou o arquivo exportado
@@ -535,7 +548,7 @@ conn := h.Dial(ctrltest.As(ctrltest.Sidecar("pedidos", "pedidos-7d9f-xk2lp")), c
 
   func AssertGolden(t testing.TB, path string, got []byte) // compara com o arquivo; -ctrltest.update regrava
 
-  const MaxQueryBytes = 4 << 10 // query bruta (FDD 08, hipótese)
+  const MaxQueryBytes = 4 << 10 // query bruta (FDD 08, confirmado)
   ```
 - Método: `GET` simulado
 - Semântica de status e cabeçalhos simulados:
@@ -545,7 +558,9 @@ conn := h.Dial(ctrltest.As(ctrltest.Sidecar("pedidos", "pedidos-7d9f-xk2lp")), c
   - **Modo:** `hostrules.PanelMode`: chave `<id>.export` válida na query dá `ModeExport`; `Target` ou `Polling` com alvo `n3x-p-...` dá `ModeFragment`; senão `ModePage`. Alvo que sumiu da árvore devolve a página com `Retargeted` (o host real mandaria `HX-Retarget`)
   - **Polling:** `Polling(id)` não consome o aviso de uso único e não renova a sessão falsa; com `SessionExpired`, `HXRedirect()` traz `/login?next=<path e query>`
   - **Exportação:** `Body()` é o arquivo; `Render().MediaType` e `Render().Filename` iguais à tabela do contrato 8 da FDD 11; indisponível dá a página com `export_unavailable`; acima de `ui.DefaultMaxExportBytes`, 422
-  - **Plugin `falho`:** 503 com página genérica (hipótese; a FDD 35 confirma, P-04)
+  - **Papel na exportação (FDD 11):** exportar `Table` exige root por padrão; `Table.ExportAllowRead` libera a leitura. Leitura sem `ExportAllowRead` recebe 403 com "Esta exportação exige o papel root." e log `panel_action_refused` com `reason=forbidden`; o link de exportação só sai na página para quem pode exportar. `Status()` devolve 403 nesse caso e `Text()` traz a mensagem, sem arquivo exportado
+  - **Aviso `list_truncated` (FDD 10):** lista acima do limite de linhas da FDD 10 sai truncada e `Render().Notices` traz `list_truncated`; `AssertNotice(t, "list_truncated")` confere
+  - **Plugin `falho`:** 503 com página genérica (confirmado; a FDD 35 ainda confere, P-04)
   - **Golden:** `AssertGolden` compara bytes com `testdata/<arquivo>`; a flag `-ctrltest.update` do binário de teste regrava. A marcação pode mudar em patch do SDK (FDD 11); golden do `Text()` é mais estável que do `Body()`
 
 **Exemplo de requisição**
@@ -555,7 +570,9 @@ res := h.Page("/negacoes?periodo=24h", ctrltest.As(ctrltest.Root("admin"))).
 if st, ok := res.Tree().(ui.Page); !ok || st.Title != "Negações" {
     t.Fatal("árvore inesperada")
 }
-exp := h.Page("/negacoes?servicos.export=csv")
+exp := h.Page("/negacoes?servicos.export=csv", ctrltest.As(ctrltest.Root("admin"))) // 200: exportação exige root por padrão
+expRead := h.Page("/negacoes?servicos.export=csv", ctrltest.As(ctrltest.Read(ctrltest.DefaultReader))) // 403 sem Table.ExportAllowRead
+expRead.AssertStatus(t, 403).AssertContains(t, "Esta exportação exige o papel root.")
 poll := h.Page("/negacoes", ctrltest.Polling("resumo"))
 ctrltest.AssertGolden(t, "testdata/negacoes.txt", []byte(res.Text()))
 ```
@@ -565,6 +582,7 @@ ctrltest.AssertGolden(t, "testdata/negacoes.txt", []byte(res.Text()))
 {
   "res": { "Status": 200, "Mode": "page", "Render": { "Title": "Negações", "Rows": 2, "Notices": [] }, "Elapsed": "0s", "RefreshEvery(resumo)": "5s" },
   "exp": { "Status": 200, "Mode": "export", "MediaType": "text/csv; charset=utf-8; header=present", "Filename": "n3x-example-servicos.csv", "Rows": 2 },
+  "expRead": { "Status": 403, "Mode": "export", "Text": "Esta exportação exige o papel root.", "Log": "panel_action_refused reason=forbidden" },
   "poll": { "Status": 200, "Mode": "fragment", "Body": "<div id=\"n3x-p-resumo\" class=\"n3x-refresh\">..." },
   "árvore inválida": "sdktest: violação em n3x.example página /negacoes (GET, request_id 00000000-0000-4000-8000-000000000003): Page.Body.Children[1].Caption: obrigatório [required]; o host real responderia 500"
 }
@@ -597,7 +615,7 @@ ctrltest.AssertGolden(t, "testdata/negacoes.txt", []byte(res.Text()))
 - Método: n/a
 - Semântica:
   - Prazo `ctrl.CardTimeout` (1 s falso); `Overview` roda cada cartão numa goroutine rastreada, ao mesmo tempo, para o `-race` ver acesso concorrente
-  - Ordem de `Overview`: por ID de plugin e, dentro dele, ordem de registro (hipótese; a FDD 35 decide a ordem da tela, P-04)
+  - Ordem de `Overview`: por ID de plugin e, dentro dele, ordem de registro (confirmado; a FDD 35 ainda confere a ordem da tela, P-04)
   - Falha: `Available()` falso, `Reason()` de `hostrules.CardFailure`, `card_failed`, `n3x_controller_card_failures_total{plugin,card,reason}`; panic gera também a falta `panic` (liberável)
   - Cartão de root para leitura: `Visible()` falso, função não chamada
 
@@ -657,7 +675,7 @@ for _, c := range h.Overview(ctrltest.As(ctrltest.Root("admin"))) {
 
   - **Formulário escondido:** `Form(id)` de um formulário que não saiu (leitura sem `AllowRead`) devolve um driver que reprova no `Submit` com "formulário <id> não saiu na página para o papel read"; `HasForm` e `HasAction` permitem afirmar a ausência
   - **Destinos (pedido da FDD 11):** em toda renderização, cada `ui.ActionRef` de `ui.ActionTargets(árvore)` precisa casar com um padrão de `Routes.Action` do plugin; senão, falta `violation` ("destino /x sem Routes.Action; o host real responderia 404 ou 405")
-  - **`AllowRead` (pedido da FDD 11):** `AllowRead` verdadeiro exige papel registrado `RoleRead`; falso exige `RoleRoot` (o zero já vira `RoleRoot`, FDD 11). Diferença reprova com falta `violation` (hipótese: "bate" lido como igualdade)
+  - **`AllowRead` (pedido da FDD 11):** `AllowRead` verdadeiro exige papel registrado `RoleRead`; falso exige `RoleRoot` (o zero já vira `RoleRoot`, FDD 11). Diferença reprova com falta `violation` (confirmado: "bate" lido como igualdade)
   - **Aviso:** um por sessão, o mais novo vence, por `ui.FlashTTL` no relógio falso; entregue só por `hostrules.FlashAllowed` (página inteira, sem `HX-Request`, sem `N3X-Refresh`, mesmo path) e apagado depois
 
 **Exemplo de requisição**
@@ -694,7 +712,7 @@ semToken := h.Submit("/negacoes/zerar", nil, ctrltest.As(ctrltest.Root("admin"))
   func Link(h *Host, opts ...ConnOption) sdktest.Option
 
   const (
-      BufconnSize       = 1 << 20 // buffer do bufconn (hipótese)
+      BufconnSize       = 1 << 20 // buffer do bufconn (confirmado)
       MaxMessageBytes   = 4 << 20 // HLD do n3x-controller
       MaxStreamsPerConn = 16      // HLD do n3x-controller
   )
@@ -712,14 +730,14 @@ semToken := h.Submit("/negacoes/zerar", nil, ctrltest.As(ctrltest.Root("admin"))
   ```
 - Método: chamadas gRPC unárias e de stream pelo nome do método (`/n3x.plugins.<namespace>.<nome>.v<N>.<Servico>/<Metodo>`)
 - Semântica de status e metadados:
-  - **Servidor:** um `grpc.Server` real sobre `bufconn`, sem TLS, com a cadeia da seção 4, mensagens até 4 MiB e 16 streams por conexão; reflection e health desligados (hipótese da L-25)
+  - **Servidor:** um `grpc.Server` real sobre `bufconn`, sem TLS, com a cadeia da seção 4, mensagens até 4 MiB e 16 streams por conexão; reflection e health desligados (confirmado, L-25)
   - **Metadados que o handler vê:** os do cliente, menos `authorization` e os internos do kit; `x-request-id` vira `request_id` no `ctx`
   - **Status:** serviço ou método desconhecido `UNIMPLEMENTED`; token ausente ou inválido `UNAUTHENTICATED` com "sessão ausente, inválida ou expirada"; papel diferente de `sidecar` `PERMISSION_DENIED`; plugin `falho` ou `SetDown` `UNAVAILABLE`; panic `INTERNAL` com mensagem genérica; prazo `DEADLINE_EXCEEDED`; mensagem grande `RESOURCE_EXHAUSTED`
-  - **Prazos:** o cliente do kit leva o prazo falso num metadado interno e tira o prazo real do grpc-go; o handler recebe `min(prazo falso do cliente, CallTimeout)` em unária e só cancelamento em stream (o teto de 1 s por mensagem espera a FDD 33, P-02). Complementa a FDD 07, cujo `ctx` informa em `Deadline()` um prazo real equivalente: nas conexões de `h.Dial`, esse prazo real nunca chega ao grpc-go. `ctx` que não é do kit (por exemplo, `context.WithTimeout` do próprio teste) tem o prazo real restante convertido em prazo falso na hora da chamada (hipótese)
-  - **Reconexão:** a conexão usa backoff curto de tempo real (10 ms a 100 ms, hipótese), para o teste de reabertura não esperar segundos reais
-  - **`Link`:** equivale a `sdktest.Options(sdktest.WithController(h.Dial(opts...)), sdktest.WithScheduler(h.Scheduler()), sdktest.ControllerSettings(...))`, com `Secret` igual a um canário que `Link` registra em `h.Credentials().Allow(serviço da conexão, canário)`. A identidade da conexão deve bater com `sdktest.Service`; o padrão das duas é `sdktest`/`sdktest-0` (hipótese, problema novo 5 da seção 1)
+  - **Prazos:** o cliente do kit leva o prazo falso num metadado interno e tira o prazo real do grpc-go; o handler recebe `min(prazo falso do cliente, CallTimeout)` em unária e só cancelamento em stream (o teto de 1 s por mensagem espera a FDD 33, P-02). Complementa a FDD 07, cujo `ctx` informa em `Deadline()` um prazo real equivalente: nas conexões de `h.Dial`, esse prazo real nunca chega ao grpc-go. `ctx` que não é do kit (por exemplo, `context.WithTimeout` do próprio teste) tem o prazo real restante convertido em prazo falso na hora da chamada (confirmado)
+  - **Reconexão:** a conexão usa backoff curto de tempo real (10 ms a 100 ms, confirmado), para o teste de reabertura não esperar segundos reais
+  - **`Link`:** equivale a `sdktest.Options(sdktest.WithController(h.Dial(opts...)), sdktest.WithScheduler(h.Scheduler()), sdktest.ControllerSettings(...))`, com `Secret` igual a um canário que `Link` registra em `h.Credentials().Allow(serviço da conexão, canário)`. A identidade da conexão deve bater com `sdktest.Service`; o padrão das duas é `sdktest`/`sdktest-0` (confirmado, problema novo 5 da seção 1)
   - **`WithScheduler` no `sdktest`:** passar também `StartTime`, `SettleWindow` ou `Jitter` ao `NewProxy` reprova com `Fatal`; o `Proxy` e o `Host` passam a ter o mesmo `Scheduler()` e o mesmo `Net()`
-  - **`SetConfigHash` (FDD 37):** o falso da visão `proxy.Sidecar` da FDD 07 implementa o método acrescentado à interface pela FDD 09 a pedido da FDD 37; guarda o último valor e conta as chamadas; valor fora de `^sha256:[0-9a-f]{64}$` gera a falta `violation` (hipótese, formato da FDD 37); vale também no standalone
+  - **`SetConfigHash` (FDD 37):** o falso da visão `proxy.Sidecar` da FDD 07 implementa o método acrescentado à interface pela FDD 09 a pedido da FDD 37; guarda o último valor e conta as chamadas; valor fora de `^sha256:[0-9a-f]{64}$` gera a falta `violation` (confirmado, formato da FDD 37); vale também no standalone
 
 **Exemplo de requisição**
 ```go
@@ -846,7 +864,7 @@ h.For("giustech.ratelimit").Fail("teste")
 - Semântica (responde à pergunta de falha de `Start`, `falho` e banner):
   - **Ler e mudar o estado no teste:** `State()` lê o `StateCell` (0 alocações, como o host); `Reporter()` permite ao teste declarar `degradado` e `ok` como o plugin faria; `Fail(motivo)` é o `StateCell.Fail` do host. Toda transição passa pelo observador do kit, que loga `plugin_state_changed` e atualiza `n3x_controller_plugin_state` e `n3x_controller_plugin_state_changes_total`
   - **Banner:** um item por plugin cujo estado não é `ok`, com o motivo saneado do `StateCell`; o HTML do banner é da FDD 35
-  - **Menu:** páginas com `InMenu`, visíveis para o papel do chamador, por ID de plugin e ordem de registro (hipótese, FDD 08)
+  - **Menu:** páginas com `InMenu`, visíveis para o papel do chamador, por ID de plugin e ordem de registro (confirmado, FDD 08)
   - **`Lifecycle`:** registro do que o host chamou, na ordem, base dos vetores de ordem da suíte
   - **Memória (pedido da FDD 04):** um `memory.Runtime` real por host, com `RuntimeOptions{DefaultMaxBytes: memory.DefaultControllerMaxBytes, Clock: monotônico falso}`; `Sweep` a cada passagem do relógio falso por múltiplo de `memory.DefaultSweepInterval` e em `SweepMemory`; `Run` nunca é chamado. Com agendador compartilhado, o `Proxy` e o `Host` têm cada um o seu `Runtime` (são processos diferentes na produção), varridos pelo mesmo relógio. `PluginView.Memory()` devolve `Account.Stats()`; o Store do core fica fora da conta (L-15, FDD 41)
   - **`Registered`:** cópia das tabelas do `Registrar` depois do `Close` (`Services` por `ctrl.Table`, `Pages`, `Actions` e `CardEntries`), para o teste do core conferir, por exemplo, `Services[ctrl.TablePublic]` igual a `["n3x.plugins.n3x.core.v1.Login"]` (FDD 36)
@@ -915,7 +933,7 @@ rep := h.Close()
   - **Entrega:** o `CoreEnv` falso é montado só para a origem do core aprovada; para os demais, `env.(ctrl.CoreEnv)` é falso, sem log
   - **`Credentials().Verify`:** `nil` para par aceito por `Allow` (comparação com `plugin.Secret.Equal`); `ErrInvalidCredentials` para serviço desconhecido ou segredo errado, sem distinguir; `ErrLoginBlocked` com `Block`; `ErrVerifierBusy` com `SetBusy`; `ctx.Err()` no prazo. A regra de contagem de falhas e o cache são da FDD 31 e não são simulados (P-10). `Calls()` nunca traz o segredo
   - **`Sessions().Revoke`:** corta as sessões falsas abertas por `PanelLogin` daquele usuário e devolve quantas
-  - **`ControllerManifest()`:** bytes de `ControllerManifest` ou, sem a opção, um JSON mínimo do kit com ID, módulo e versão de cada plugin do host, marcado como não normativo (o formato é da FDD 22, hipótese); cópia nova a cada chamada
+  - **`ControllerManifest()`:** bytes de `ControllerManifest` ou, sem a opção, um JSON mínimo do kit com ID, módulo e versão de cada plugin do host, marcado como não normativo (o formato é da FDD 22, confirmado); cópia nova a cada chamada
   - **`CallerIP(ctx)`:** o `PeerIP` da conexão por onde chegou a chamada gRPC em curso; `false` fora de handler gRPC (página, cartão, `Start`, tarefa) ou com `PeerIP` zero; IPv4 mapeado em IPv6 é convertido. `x-forwarded-for` com `grpc.trusted_proxies` não é simulado (FDD 33, P-02)
   - **`HostFacts` e `CheckHost`:** só o core, com `RootName`; `HostValidator` fora do core recusa na fase de config
   - **Tabela pública:** montada sem autenticação; `Caller` zero no handler; regras do `Registrar` (`public_method`, `public_overlap`, `too_many`)
@@ -979,7 +997,7 @@ _, errAna := h.PanelLogin("ana", plugin.NewSecret("senha-da-ana"))
 - Método: n/a
 - Semântica:
   - **Métricas:** as do plugin no `telemetry.Registry` real, com prefixo `n3x_<namespace>_<nome>_`, rótulo `plugin` e `instance` vazio (omitido, FDD 08); as de plataforma simuladas na seção 7, com os mesmos nomes e rótulos do host. `AssertCounter` com nome desconhecido reprova listando os parecidos; uso indevido de métrica reprova sempre (FDD 06)
-  - **Logs:** linhas do `env.Log()` com `component=plugin`, `plugin_id` e `request_id` quando o `ctx` traz, e eventos do host com `component=host` e os nomes das FDDs 08, 09 e 11 (seção 7); `ts` no relógio falso; sem amostragem (hipótese, igual à FDD 07)
+  - **Logs:** linhas do `env.Log()` com `component=plugin`, `plugin_id` e `request_id` quando o `ctx` traz, e eventos do host com `component=host` e os nomes das FDDs 08, 09 e 11 (seção 7); `ts` no relógio falso; sem amostragem (confirmado, igual à FDD 07)
   - **Segredos (ADR-020, pedidos das FDDs 03 e 08):** marcadores: valor de cada campo segredo das configs com pelo menos `sdktest.MinSecretScanLen` bytes, segredos de `Credentials().Allow`, `RootPassword`, senhas de `PanelLogin`, tokens vistos em `authorization` e qualquer texto com o prefixo `n3x-canary-`. Saídas varridas: logs, rótulos de métrica, textos de erro de `Check`, `CheckHost`, `New`, `Start`, `Stop` e handlers (inclusive os `Detail` da `Validate`), mensagens de status gRPC devolvidas por handlers, HTML de páginas, fragmentos e cartões, arquivos exportados, mensagens de aviso e motivos de estado. Fora da varredura: payload de respostas gRPC e de chamadas entre plugins (fluxo legítimo de dado). Achado reprova sempre, com o caminho do campo e a linha mascarada; com agendador compartilhado, os marcadores das duas metades são os mesmos
   - **Faltas:** a falta não muda o resultado (que é o do host real); só reprova. `AllowFaults` libera `FaultPanic`, `FaultViolation` e `FaultZombie`; `FaultMetricMisuse` e `FaultSecretLeak` nunca
   - **Mensagem:** `sdktest: <o que aconteceu> em <plugin> <onde> (request_id <id>): <detalhe>; <o que o host real faria>; dica: <ação>`, sem valor de segredo, de campo ou de query
@@ -1056,7 +1074,7 @@ h.AssertCounter(t, "n3x_giustech_quota_checks_total", sdktest.Labels{"result": "
   ```
 - Método: n/a (funções puras: sem I/O, sem goroutine, sem estado; 0 alocações em `OnFailure`, `HandlerStatus`, `CardFailure`, `PanelMode` e `FlashAllowed`)
 - Semântica:
-  - **`Order`:** regras `duplicate` (`plugins["<id>"]`), `depends_missing` (`plugins["<id>"].depends_on[<i>]`), `depends_cycle` (caminho do ciclo no `Detail`, como a FDD 20) e `core_depends` (core com dependências; hipótese). O build já recusa os três primeiros (`N3X-B005` e `N3X-B006`); o host confere de novo (HLD do `n3x-controller`, subida passo 2)
+  - **`Order`:** regras `duplicate` (`plugins["<id>"]`), `depends_missing` (`plugins["<id>"].depends_on[<i>]`), `depends_cycle` (caminho do ciclo no `Detail`, como a FDD 20) e `core_depends` (core com dependências; confirmado). O build já recusa os três primeiros (`N3X-B005` e `N3X-B006`); o host confere de novo (HLD do `n3x-controller`, subida passo 2)
   - **Tabela de `OnFailure`** (FDD 08, "Regras de falha da subida"):
 
 | `Stage` | Obrigatório | Opcional |
@@ -1068,7 +1086,7 @@ h.AssertCounter(t, "n3x_giustech_quota_checks_total", sdktest.Labels{"result": "
 | `start` | `EffectAbort` | `EffectFailed` |
 | `register_panic` | `EffectAbort` | `EffectFailedStop` |
 
-  - **`HandlerStatus`:** panic dá 500; `ctxErr` igual a `context.DeadlineExceeded` dá 504, qualquer que seja o erro devolvido (hipótese); `ErrNotFound` 404; `ErrBadRequest` 400; outro erro (inclusive `ErrNilWidget`) 500
+  - **`HandlerStatus`:** panic dá 500; `ctxErr` igual a `context.DeadlineExceeded` dá 504, qualquer que seja o erro devolvido (confirmado); `ErrNotFound` 404; `ErrBadRequest` 400; outro erro (inclusive `ErrNilWidget`) 500
   - **`CardFailure`:** a mesma precedência (panic, prazo, erro, widget nulo)
   - **Plataforma, não plugin:** a doc do pacote diz isso, e a FDD 24 recusa o import em código de plugin (pedido). Mudança de regra muda o host e o kit juntos
   - **Pedido às FDDs 32, 34 e 35:** o host real chama estas funções em vez de reescrever as regras
@@ -1138,7 +1156,7 @@ m, tg := hostrules.PanelMode(q /* servicos.export=csv */, true, "n3x-p-servicos"
       Card(id plugin.ID, card string, caller ctrl.Identity) CardOutcome
       Submit(r SubmitRequest) SubmitOutcome
       Dial(caller ctrl.Identity, peer netip.Addr) grpc.ClientConnInterface // já autenticada como o sidecar
-      CoreEnv() (ctrl.CoreEnv, bool)                         // a visão que o host entregaria ao core
+      CoreEnv() (ctrl.CoreEnv, bool)                         // a visão que o host entregaria ao core; no host real, o ponto de injeção que entrega CoreEnv a um plugin de teste que não é o core existe só em _test.go do n3x-controller
       Fail(id plugin.ID, reason string)
       Advance(d time.Duration)                               // kit: relógio falso; host real: espera real
       Metric(name string, labels map[string]string) (float64, bool)
@@ -1214,15 +1232,15 @@ m, tg := hostrules.PanelMode(q /* servicos.export=csv */, true, "n3x-p-servicos"
 - Método: n/a
 - Semântica (responde à pergunta de paridade do ASSUNTO):
   - **As duas coisas, em camadas:** (1) o que é regra pura fica em código único do SDK (`Registrar`, `StateCell`, `CheckPrivileged`, `CapabilitiesOf`, renderizador, `ReadSubmission`, `Finish`, `hostrules`); (2) o que depende do processo (goroutines, prazos reais, servidor gRPC, roteador, sessão, transporte em processo) é conferido por suítes publicadas pelo SDK e rodadas nos dois harnesses: o do kit (`ctrltest.Harness()`) na CI do SDK e o do host real na CI do `n3x-controller` (FDDs 32 a 35). Um caso que passa num e falha no outro é bug de uma das implementações, e a correção vem com um caso novo
-  - **`ScriptPlugin`:** config JSON com o roteiro de cada capacidade (`validate` com erros, `new`, `start` e `stop` com `ok`, `error`, `panic`, `sleep` ou `ignore_ctx`; serviços, páginas, ações e cartões a registrar, com comportamento `ok`, `not_found`, `bad_request`, `slow`, `panic`, `nil` ou `invalid_tree`; chamadas a dependências; `degraded`), e um gravador do ciclo de vida identificado na config. Os serviços são montados a partir do ID, com mensagens `google.protobuf.Struct` (hipótese), para cada plugin do caso ter o próprio namespace
-  - **Mínimos:** `RunLifecycle` 14 casos, `RunCalls` 19, `RunPanel` 12, `RunPluginAPI` 8, `RunEnv` 12, `RunCoreEnv` 14 (8 sem o core real); total de 79 (73 sem o core real)
+  - **`ScriptPlugin`:** config JSON com o roteiro de cada capacidade (`validate` com erros, `new`, `start` e `stop` com `ok`, `error`, `panic`, `sleep` ou `ignore_ctx`; serviços, páginas, ações e cartões a registrar, com comportamento `ok`, `not_found`, `bad_request`, `slow`, `panic`, `nil` ou `invalid_tree`; chamadas a dependências; `degraded`), e um gravador do ciclo de vida identificado na config. Os serviços são montados a partir do ID, com mensagens `google.protobuf.Struct` (confirmado), para cada plugin do caso ter o próprio namespace
+  - **Mínimos:** `RunLifecycle` 14 casos, `RunCalls` 20, `RunPanel` 13, `RunPluginAPI` 8, `RunEnv` 12, `RunCoreEnv` 14 (8 sem o core real); total de 81 (75 sem o core real, isto é, sem os 6 casos que exigem `WithCore`)
   - **`RunLifecycle`:** ordem com `a`, `b` dependendo de `a` e `c` de `b` (e com o core, se `WithCore`); `Check` de todos antes de qualquer `New`; `CheckHost` só no core; `HostValidator` fora do core recusado; config inválida de opcional impede a subida; registro fora do namespace e rota fora do prefixo de opcional impedem, com `Path` e `Rule` iguais; `New` com erro em opcional dá `falho` sem `Start`; `Start` com erro em opcional dá `falho` sem registros e sem `Stop`; `Start` que ignora o `ctx` vira falha no prazo e o retorno tardio é ignorado; panic em `Routes` de opcional dá `falho` e `Stop`; obrigatório com `Start` falhando aborta e chama `Stop` dos já subidos em ordem inversa; `Stop` em ordem inversa com 5 s cada e abandono; tarefas de fundo só depois de todos e nunca de `falho`; dependência `falho` dá `ErrDependencyFailed`
-  - **`RunCalls`:** página com papel insuficiente 403; query fora dos limites 400; `ErrNotFound` 404; `ErrBadRequest` 400; prazo 504 em `CallTimeout`; panic 500 com `kind="panel"`; widget nulo 500; árvore inválida 500; cartão com prazo de 1 s "indisponível" e outros seguem; cartão com panic; cartão de root invisível para leitura; gRPC com `Caller` `sidecar`; `authorization` ausente no handler; `request_id` igual ao `x-request-id`; prazo unário `min(cliente, CallTimeout)`; panic gRPC `INTERNAL` com `kind="grpc"`; plugin `falho` `UNAVAILABLE`; serviço desconhecido `UNIMPLEMENTED`; curinga `{id}` e literal no mesmo nível (`/s/novo` vence `/s/{id}`)
-  - **`RunPanel`:** POST sem `_csrf` 403 com a mensagem; papel insuficiente 403 com a mensagem; `Done` 303 com `Location` e aviso entregue na página seguinte; `Rejected` com os problemas; aviso só na página inteira do mesmo path; polling não consome o aviso; polling com sessão vencida dá `HX-Redirect`; exportação CSV com `MediaType` e `Filename`; exportação indisponível com aviso; exportação acima de 16 MiB 422; POST em padrão só de página 405; corpo acima de 64 KiB 413
+  - **`RunCalls`:** página com papel insuficiente 403; query fora dos limites 400; `ErrNotFound` 404; `ErrBadRequest` 400; prazo 504 em `CallTimeout`; panic 500 com `kind="panel"`; widget nulo 500; árvore inválida 500; cartão com prazo de 1 s "indisponível" e outros seguem; cartão com panic; cartão de root invisível para leitura; gRPC com `Caller` `sidecar`; `authorization` ausente no handler; `request_id` igual ao `x-request-id`; prazo unário `min(cliente, CallTimeout)`; panic gRPC `INTERNAL` com `kind="grpc"`; plugin `falho` `UNAVAILABLE`; serviço desconhecido `UNIMPLEMENTED`; curinga `{id}` e literal no mesmo nível (`/s/novo` vence `/s/{id}`); lista acima do limite da FDD 10 com o aviso `list_truncated`
+  - **`RunPanel`:** POST sem `_csrf` 403 com a mensagem; papel insuficiente 403 com a mensagem; `Done` 303 com `Location` e aviso entregue na página seguinte; `Rejected` com os problemas; aviso só na página inteira do mesmo path; polling não consome o aviso; polling com sessão vencida dá `HX-Redirect`; exportação CSV pelo root com `MediaType` e `Filename`; exportação por leitura sem `ExportAllowRead` 403 com "Esta exportação exige o papel root." e `panel_action_refused` com `reason=forbidden`; exportação indisponível com aviso; exportação acima de 16 MiB 422; POST em padrão só de página 405; corpo acima de 64 KiB 413
   - **`RunPluginAPI`:** os 8 casos da FDD 08 (`ErrNotDependency` para fora de `depends_on` e para o próprio ID, `ErrNoPluginAPI`, `ErrDependencyFailed`, método da tabela `sidecar` dá `Unimplemented`, `Caller` imposto, cópia da mensagem, prazo, panic `Internal`)
   - **`RunEnv`:** `Background` depois do `New` faz panic com `ErrSealed`; 9ª tarefa `ErrTooManyTasks`; tarefas depois da subida; desligamento em 2 s; 17ª conexão `ErrTooManyConns`; `Dial` para a `17443` em loopback `ErrDialDenied`; memória com instância vazia e cota de 64 MiB; métricas com `plugin` e sem `instance`; campos fixos do log; `plugin.Secret` mascarado; transição de estado com log e métrica; `state_ignored` depois de `Fail`
   - **`RunCoreEnv`:** `env.(ctrl.CoreEnv)` falso para não core; os 5 privilégios de controller recusados em `acme.x` com o `Path` da FDD 09; `CallerIP` falso fora de handler gRPC; `CallerIP` igual ao par; `ControllerManifest` com cópia nova; `Verify` com os erros e mensagens genéricas da FDD 09; tabela pública sem `Authenticate` e com `Caller` zero; `HostValidator` com `root_name`; e, com `WithCore`: `authorization` retirado; identidade inválida de `Authenticate` dá `UNAUTHENTICATED` e `privileged_misbehavior`; core `failed` dá `UNAVAILABLE` sem chamar `Authenticate`; core `degraded` deixa só o root entrar; `CheckUser` que devolve identidade diferente de `{read, usuário}` recusado com `privileged_misbehavior`; `capability_unused` com `WriteAudit`
-  - **Core real:** um core válido só existe com o tipo em `github.com/giustech/n3x-plugin-core`, que o SDK não importa; por isso os casos positivos sem o core usam `Runtime.CoreEnv()`, e os casos com `WithCore` rodam no `n3x-plugin-core` (contra `ctrltest.Harness()`) e no `n3x-controller` (contra o host real)
+  - **Core real e `Runtime.CoreEnv()` (confirmado):** um core válido só existe com o tipo em `github.com/giustech/n3x-plugin-core`, que o SDK não importa; por isso os casos positivos sem o core usam `Runtime.CoreEnv()`. O ponto de injeção que entrega `CoreEnv` a um plugin de teste que não é o core existe SOMENTE em arquivos `_test.go` do `n3x-controller` (ligado ao harness); nenhum código de produção nem opção concede `CoreEnv` a quem não é o core (ADR-019). Os casos rodam nos dois harnesses (kit e host real); o seam de teste é revisado como critério de aceite das FDDs 32 e 33 (outro repositório). Os casos com `WithCore` rodam no `n3x-plugin-core` (contra `ctrltest.Harness()`) e no `n3x-controller` (contra o host real)
   - **Tempo:** no harness com relógio real, casos `Slow` são pulados com `-short`; a tolerância de prazo no host real é de 50 ms (FDD 08)
 
 **Exemplo de requisição** (no `n3x-controller`, FDD 32)
@@ -1251,7 +1269,7 @@ func TestConformidadeHost(t *testing.T) {
 - Semântica:
   - `sdktest/ctrltest`, `sdktest/hostconformance` e `controller/hostrules` seguem o semver do módulo; antes da `v1.0.0`, `v0.x` pode mudar
   - Por minor: opção nova, asserção nova, caso novo na suíte (que pode reprovar uma implementação divergente, de propósito), regra nova em `hostrules` que acompanha regra nova de FDD do host
-  - Checagem automática nova que pode reprovar teste de plugin que antes passava entra desligada numa minor e ligada na major seguinte (hipótese, igual à FDD 07); exceção: segredo na saída, que entra ligada por ser segurança
+  - Checagem automática nova que pode reprovar teste de plugin que antes passava entra desligada numa minor e ligada na major seguinte (confirmado, igual à FDD 07); exceção: segredo na saída, que entra ligada por ser segurança
   - Mudança de regra em `hostrules` muda o host real e o kit na mesma versão do SDK (o host é compilado com o SDK do binário, FDD 08)
   - Superfície pública dos três pacotes e dos acréscimos ao `sdktest` congelada por golden de `go doc -all`
 
@@ -1260,7 +1278,7 @@ func TestConformidadeHost(t *testing.T) {
 | Opção, asserção, falso ou caso de conformidade novo | Minor |
 | Simulação nova de métrica ou log do host confirmados por FDD do controller | Minor |
 | Mudar a assinatura de `NewHost`, `Page`, `Card`, `Submit`, `Dial` ou `Link` | Major |
-| Mudar o padrão de um prazo, do chamador ou da identidade da conexão | Minor com nota de versão (hipótese, igual às FDDs 06 e 08) |
+| Mudar o padrão de um prazo, do chamador ou da identidade da conexão | Minor com nota de versão (confirmado, igual às FDDs 06 e 08) |
 | Corrigir divergência com o host real | Patch, com caso novo na suíte |
 
 **Exemplo de requisição**
@@ -1301,7 +1319,9 @@ O n3x-controller atualiza o SDK; o harness dele ainda guarda o aviso por 120 s.
 | Destino de `Form` ou `Action` sem `Routes.Action`; `AllowRead` diferente do papel | Falta `violation` | Pedido da FDD 11 |
 | Envio sem CSRF, sem papel, corpo grande, campos fora dos limites | 403, 403, 413, 400 com as mensagens da FDD 11 | Igual ao host |
 | Exportação indisponível ou grande demais | Página com `export_unavailable`; 422 | FDD 11 |
-| Plugin `falho`: página, gRPC, dependência | 503 (hipótese, P-04), `UNAVAILABLE`, `ErrDependencyFailed` | |
+| Exportação por leitura sem `Table.ExportAllowRead` | 403 com "Esta exportação exige o papel root."; `panel_action_refused` com `reason=forbidden`; sem arquivo | FDD 11 |
+| Lista acima do limite de linhas | Aviso `list_truncated` no `Render().Notices`; status 200 | FDD 10 |
+| Plugin `falho`: página, gRPC, dependência | 503 (confirmado; a FDD 35 ainda confere, P-04), `UNAVAILABLE`, `ErrDependencyFailed` | |
 | gRPC sem `authorization` com core; identidade inválida; core `failed` | `UNAUTHENTICATED`; `UNAUTHENTICATED` e `privileged_misbehavior`; `UNAVAILABLE` | FDD 09 |
 | Panic em handler gRPC, `PluginAPI`, cartão, página ou tarefa | `INTERNAL`, `Internal`, indisponível, 500, reinício com backoff; falta `panic` | `n3x_controller_plugin_panics_total{kind}` |
 | Registrador usado depois do `Close` | Panic `ErrRegistrationClosed` contido; falta `violation` | |
@@ -1310,7 +1330,7 @@ O n3x-controller atualiza o SDK; o harness dele ainda guarda o aviso por 120 s.
 | Segredo ou canário na saída | `Errorf` sempre, com a linha mascarada | ADR-020 |
 | `debug.ReadBuildInfo` sem módulo principal | Módulo vazio: core recusado com `privileged_origin`; os demais seguem | Use `Module`; contingência na seção 10 |
 | `WithScheduler` com `StartTime`, `SettleWindow` ou `Jitter` | `Fatal` | Contrato 6 |
-| `SetConfigHash` fora de `sha256:<64 hex>` | Falta `violation` (hipótese) | FDD 37 |
+| `SetConfigHash` fora de `sha256:<64 hex>` | Falta `violation` (confirmado) | FDD 37 |
 | Host criado depois do `Proxy` ligado | Aviso no log do teste; `Exit` do core recebe `UNAVAILABLE` na limpeza | Ordem do `t.Cleanup` |
 | Goroutine bloqueada fora das primitivas | Opaca depois de `SettleWindow`; aviso no log do teste | FDD 07 |
 
@@ -1354,7 +1374,7 @@ O n3x-controller atualiza o SDK; o harness dele ainda guarda o aviso por 120 s.
 
 **Logs**
 - Captura com o handler do SDK (`telemetry.NewLogHandler`): campos fixos na ordem da FDD 06, `ts` no relógio falso; logs do plugin com `component=plugin`, `plugin_id` e `request_id` quando o `ctx` traz; sem `service` nem `instance` no controller (FDD 08)
-- Eventos do host com `component=host`: `config_problem`, `plugin_registration_refused`, `plugin_started`, `plugin_start_failed`, `plugin_state_changed`, `state_ignored`, `plugin_stopped`, `plugin_stop_failed`, `card_failed`, `page_failed`, `dependency_refused`, `plugin_panic`, `privileged_granted`, `privileged_refused`, `privileged_misbehavior`, `capability_unused`, `auth_failed`, `auth_core_unavailable`, `panel_action_refused`, e os de tarefas, conexões e métricas da FDD 06 (`background_panic`, `dial_slot_timeout`, `metric_misuse` e os demais); sem amostragem (hipótese): o host real amostra `card_failed`, `page_failed`, `dependency_refused`, `plugin_panic` e `auth_core_unavailable` (FDDs 08 e 09), e por isso nenhum caso de `hostconformance` confere a quantidade de linhas desses eventos, só a presença
+- Eventos do host com `component=host`: `config_problem`, `plugin_registration_refused`, `plugin_started`, `plugin_start_failed`, `plugin_state_changed`, `state_ignored`, `plugin_stopped`, `plugin_stop_failed`, `card_failed`, `page_failed`, `dependency_refused`, `plugin_panic`, `privileged_granted`, `privileged_refused`, `privileged_misbehavior`, `capability_unused`, `auth_failed`, `auth_core_unavailable`, `panel_action_refused`, e os de tarefas, conexões e métricas da FDD 06 (`background_panic`, `dial_slot_timeout`, `metric_misuse` e os demais); sem amostragem (confirmado): o host real amostra `card_failed`, `page_failed`, `dependency_refused`, `plugin_panic` e `auth_core_unavailable` (FDDs 08 e 09), e por isso nenhum caso de `hostconformance` confere a quantidade de linhas desses eventos, só a presença
 - Mensagens do próprio kit (goroutine opaca, desvio do modo sem core, ordem de limpeza) vão para `t.Logf`, nunca para a saída capturada
 - Proteção de dados: checagem de segredos em toda a saída (contrato 10); mensagens de falha nunca trazem valor de segredo, de campo, de query ou de célula
 
@@ -1406,7 +1426,7 @@ O n3x-controller atualiza o SDK; o harness dele ainda guarda o aviso por 120 s.
 - **Prazos exatos:** `Start` que ignora o `ctx` falha em 30 s falsos; página presa dá 504 em 10 s falsos; cartão preso fica "indisponível" em 1 s falso enquanto outros 2 cartões renderizam; `Stop` preso é abandonado em 5 s falsos; provedor de `PluginAPI` preso dá `DeadlineExceeded` em 10 s falsos; cada um em menos de 300 ms de tempo real, 100 de 100 execuções
 - **Renderização e acessibilidade:** toda página, fragmento e cartão do `denycount` e das 14 páginas novas da galeria da FDD 11, montadas como páginas de um plugin de teste, passam no `uitest.Lint` automático; uma árvore sem `Caption` em `Table` reprova com o `FieldError` do `required`; com `AllowFaults(sdktest.FaultViolation)`, o mesmo caso vê 500
 - **Envio:** formulário renderizado para root, `Set("limit", "0")` e `Submit()` dão 303 com `Location` igual ao `_return`; `Follow()` mostra o resumo com o problema; envio sem `_csrf` e envio de leitura dão 403 com as mensagens da FDD 11; destino de `Action` sem `Routes.Action` reprova; `AllowRead` verdadeiro com ação de papel root reprova; o aviso não é entregue num `Polling` nem em outro path
-- **Exportação e polling:** exportação CSV da tabela de 437 linhas com filtro que deixa 412 dá 412 linhas de dados, `MediaType` e `Filename` da FDD 11; 10.001 linhas dão `export_unavailable`; `Polling("resumo")` devolve o fragmento igual ao trecho da página e `RefreshEvery("resumo")` igual a 5 s; com `SessionExpired`, `HXRedirect()` começa com `/login?next=`
+- **Exportação e polling:** exportação CSV (chamador root) da tabela de 437 linhas com filtro que deixa 412 dá 412 linhas de dados, `MediaType` e `Filename` da FDD 11; 10.001 linhas dão `export_unavailable`; a mesma exportação pelo chamador `Read(DefaultReader)` dá 403 com "Esta exportação exige o papel root." e `panel_action_refused` com `reason=forbidden`, e com `Table.ExportAllowRead` dá 200; lista acima do limite da FDD 10 traz o aviso `list_truncated`; `Polling("resumo")` devolve o fragmento igual ao trecho da página e `RefreshEvery("resumo")` igual a 5 s; com `SessionExpired`, `HXRedirect()` começa com `/login?next=`
 - **gRPC e `bufconn`:** sem core, o handler vê `Caller` `{sidecar, pedidos, pedidos-0}` e não vê `authorization` enviada pelo cliente; `x-request-id` vira `request_id`; panic dá `INTERNAL` e falta `panic`; `SetDown(true)` dá `UNAVAILABLE` e fecha o stream aberto; mensagem de 5 MiB dá `RESOURCE_EXHAUSTED`
 - **Streams sem espera real:** stream bidirecional de 100 mensagens conduzido por tarefa de fundo do kit de proxy com `Advance` termina em menos de 500 ms de tempo real, com 0 goroutines opacas no log do teste
 - **Token invisível (FDD 09):** com o core real (no `n3x-plugin-core`) e `Link`, uma chamada do `n3x.example` chega ao host com `authorization`; o handler do `n3x.example` não vê `authorization`; o token nunca aparece nos logs capturados das duas metades
@@ -1417,13 +1437,13 @@ O n3x-controller atualiza o SDK; o harness dele ainda guarda o aviso por 120 s.
 - **Receptor ponteiro:** `New` que devolve `Example{}` com `Routes` de receptor ponteiro reprova com `capability_pointer_receiver`
 - **`SetConfigHash` (FDD 37):** com o falso da visão `Sidecar`, um core de teste que chama `SetConfigHash("sha256:" + 64 hex)` uma vez dá `p.ConfigHash()` igual a esse valor e `calls` igual a 1, com e sem controller; valor mal formado gera a falta `violation`
 - **Corridas:** um plugin de teste com contador sem trava num cartão, chamado por `Overview` em 8 goroutines com 1.000 repetições, faz `go test -race` falhar (teste da CI que espera a falha do processo filho)
-- **Conformidade:** `hostconformance.Run` com `ctrltest.Harness()` passa com no mínimo 79 casos (73 sem o core real) na CI do SDK; a mesma suíte é critério de aceite das FDDs 32, 33, 34 e 35 no harness do host real e das FDDs 36 a 45 no harness do kit com `WithCore`
+- **Conformidade:** `hostconformance.Run` com `ctrltest.Harness()` passa com no mínimo 81 casos (75 sem o core real) na CI do SDK; a mesma suíte é critério de aceite das FDDs 32, 33, 34 e 35 no harness do host real e das FDDs 36 a 45 no harness do kit com `WithCore`
 - **`hostrules`:** exemplo do contrato 11 com o resultado mostrado; `Order` com ciclo, dependência ausente, ID duplicado e core com dependência dá as 4 regras; `HandlerStatus`, `CardFailure`, `PanelMode` e `FlashAllowed` com 0 alocações (`testing.AllocsPerRun(1000, ...)`); `go list -deps ./controller/hostrules` só com biblioteca padrão, `plugin/`, `controller/` e `controller/ui`
 - **Memória:** um plugin de teste que grava com `SetWithTTL(..., 2 * time.Second)` vê `Len()` igual a 0 depois de `h.Scheduler().Advance(3 * time.Second)`, sem `SweepMemory`; `PluginView.Memory()` mostra a cota de 64 MiB por padrão e a de `Limits` quando passada
 - **Dependências:** `go list -deps ./sdktest` sem `controller/`; `go list -deps ./sdktest/ctrltest ./sdktest/hostconformance` sem pacotes do `n3x-controller` nem do `n3x-sidecar`, sem `secret/`; busca na CI não acha `time.Sleep` no código do kit; `go vet` e `go test -race ./sdktest/... ./controller/hostrules/...` passam
-- **Custo:** `NewHost` com 3 páginas e 2 cartões em menos de 20 ms de tempo real; 1.000 chamadas de `Page` com tabela de 50 linhas em menos de 1 s sem `-race` e menos de 10 s com `-race` (hipótese de tempos)
+- **Custo:** `NewHost` com 3 páginas e 2 cartões em menos de 20 ms de tempo real; 1.000 chamadas de `Page` com tabela de 50 linhas em menos de 1 s sem `-race` e menos de 10 s com `-race` (tempos confirmados)
 - **Superfície:** golden de `go doc -all` de `./sdktest/ctrltest`, `./sdktest/hostconformance`, `./controller/hostrules` e dos acréscimos de `./sdktest` igual ao versionado
-- **Cobertura:** no mínimo 90% de linhas em `sdktest/ctrltest` e `controller/hostrules` (hipótese, igual às FDDs anteriores)
+- **Cobertura:** no mínimo 90% de linhas em `sdktest/ctrltest` e `controller/hostrules` (confirmado, igual às FDDs anteriores)
 
 ---
 

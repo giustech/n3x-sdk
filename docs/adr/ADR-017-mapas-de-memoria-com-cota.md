@@ -1,6 +1,6 @@
 # ADR-017: Memória isolada com mapas tipados, cota e descarte do mais antigo
 
-Status: Aceito
+Status: Aceito (atualizado em 2026-10-22)
 Data: 2026-10-19
 
 ## Contexto
@@ -23,3 +23,9 @@ O ADR-005 definiu o espaço de memória isolado por plugin, mas deixou para o HL
 
 ## Requisitos relacionados
 FR-012 e FR-013; ADR-005.
+
+## Atualização (2026-10-22)
+Decisões aprovadas na clarificação das FDDs SDK-01 a SDK-16:
+- O descarte é aproximado do menos usado recentemente (CLOCK). A frase "o item mais antigo é descartado" e o título ("descarte do mais antigo") ficam substituídos por essa regra
+- O handle é por instância e a cota é por plugin
+- Os limites ficam em `runtime.plugin_limits["<id>"].memory.max_bytes` (de 1 MiB a 1 GiB), nos dois `n3x.yaml`. Isso substitui "`memory.max_bytes` na config do plugin"

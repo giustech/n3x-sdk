@@ -1,6 +1,6 @@
 # ADR-019: Contrato das capacidades privilegiadas do plugin core
 
-Status: Aceito
+Status: Aceito (atualizado em 2026-10-22)
 Data: 2026-10-19
 
 ## Contexto
@@ -40,3 +40,13 @@ As interfaces seguem no contrato, mas o uso na v1 mudou com o HLD do `n3x-plugin
 - `WriteAudit` fica reservado para a v2: o core da v1 não fornece o gravador de auditoria, e o host não recusa ações por falha de gravação (ADR-002 do `n3x-plugin-core`)
 - `ChangePassword` pode devolver `ErrUnsupported`; o core da v1 sempre devolve, porque os usuários vêm só do `n3x.yaml` (ADR-003 do `n3x-plugin-core`)
 - `env.Sessions().Revoke` fica sem uso na v1, porque não há gestão de usuários em runtime (ADR-003 do `n3x-plugin-core`)
+
+## Atualização (2026-10-22)
+Decisões aprovadas na clarificação das FDDs SDK-01 a SDK-16:
+- Divergência interna corrigida: a linha da tabela que diz que `WriteAudit` é síncrono e recusa a ação do painel se falhar fica substituída. Vale "reservado à v2, o core da v1 não fornece"
+- O login é o serviço próprio `n3x.plugins.n3x.core.v1.Login`, com um método unário. `Register`, `Heartbeat` e `Exit` ficam no serviço `Core`
+- Novas interfaces: `CoreEnv` (proxy e controller), visão `Sidecar`, `HostValidator`/`CheckHost`, `ControllerManifest` e `CallerIP`
+- O IP do chamador do `Login` considera `grpc.trusted_proxies`
+- Há uma metade só de fundo, exclusiva do core
+- O core declara `degradado`; o host marca `falho` por panic repetido na autenticação
+- A origem do core é conferida por `CheckPrivileged` (tipo dinâmico no módulo do core), com seam de teste somente em arquivos `_test.go` do controller

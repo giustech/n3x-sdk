@@ -51,9 +51,18 @@ Há um problema novo, achado nesta entrevista: os acessores do `Stream` não cop
 - PRD 1.5: FR-012 (espaço de memória preso ao ID, cota padrão de 16 MiB no sidecar e 64 MiB no controller, descarte do mais antigo, sem acesso ao espaço de outro plugin), FR-013 (memória isolada na metade de controller); requisitos não funcionais de desempenho (0 alocações nos caminhos comuns do SDK), confiabilidade (`GOMEMLIMIT` contra OOM) e testes (benchmarks com `-benchmem`)
 - ADRs do `n3x-sdk`: ADR-005 (memória isolada, de plataforma), ADR-011, ADR-017, ADR-021 e ADR-022; ADR-001 e ADR-009 do `n3x-plugin-core`; ADR-007 e ADR-008 do `n3x-sidecar`
 - Lacunas do README:
-  - **L-51 fechada na parte de memória:** a cota fica em `runtime.plugin_limits["<id>"].memory.max_bytes`, por ID de plugin, nos dois `n3x.yaml`, fora da `config` tipada e fora do item de instância (hipótese). A mesma regra vale para os limites de tarefas e conexões, que a FDD 06 aplica (contrato 5)
+  - **L-51 fechada na parte de memória:** a cota fica em `runtime.plugin_limits["<id>"].memory.max_bytes`, por ID de plugin, nos dois `n3x.yaml`, fora da `config` tipada e fora do item de instância (confirmado). A mesma regra vale para os limites de tarefas e conexões, que a FDD 06 aplica (contrato 5)
   - **L-09 recebe insumo:** não há modo "fixo" na v1 (hipótese); a recomendação para a FDD 39 é guardar o token num campo privado da instância do core
   - **L-15 não é impedida:** o pacote só contabiliza o que passa por `memory.Map`; o Store do core, com estruturas próprias e teto de 128 MiB, fica fora da cota. A confirmação e o registro da exceção são da FDD 41
+
+**Decisões aprovadas na clarificação**
+- Cada instância tem o próprio handle e mapas separados (mesmo nome em escopos diferentes são mapas distintos); todas as instâncias de um plugin no processo dividem a cota do plugin. No controller há um escopo por plugin, com instância `""`
+- Os limites de runtime por plugin ficam em `runtime.plugin_limits["<id>"]` nos dois `n3x.yaml` (`memory.max_bytes` aqui; tarefas e conexões na FDD 06). O PRD e os schemas dos `n3x.yaml` (FDDs 15 e 30) precisam registrar o bloco
+- As demais hipóteses de tipos aceitos, TTL (`ttl < 0` remove, `ttl == 0` sem expiração), recusa de item maior que a cota, faixa de 1 MiB a 1 GiB, métrica `n3x_plugin_memory_max_bytes`, intervalo de varredura de 1 s e metas de benchmark ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Dependem de outros repositórios: criação de contas, escopos e selo (FDDs 17 e 32), publicação das métricas (FDD 16), validação do bloco `runtime.plugin_limits` (FDDs 15 e 30), Store do core fora da cota (FDD 41), guarda do token do core (FDD 39), regra de análise estática contra `memory.NewRuntime` em plugin (FDD 24)
+- Divergência a tratar no Workflow 3: o ADR-017 e o PRD falam em "descarte do mais antigo", e a FDD (como o HLD) usa CLOCK, ou seja, o menos usado recentemente
 
 ---
 
@@ -240,7 +249,7 @@ Estados de um escopo: `aberto` (criado por `NewScope`, aceita `NewMap`) e `selad
   ```
 - Método: n/a (chamada local)
 - Semântica:
-  - **Escopo (hipótese):** cada instância recebe o próprio handle. No sidecar, um escopo por `instance` do `n3x.yaml`; no controller, um escopo por plugin, com instância `""`. Todos os escopos de um plugin no mesmo processo dividem a mesma conta, e portanto a mesma cota. Mapas de escopos diferentes são distintos mesmo com o mesmo nome. Motivo: cada `New` começa com estado próprio, como os campos da instância, e duas instâncias do `n3x.example` não somam a mesma contagem
+  - **Escopo (confirmado):** cada instância recebe o próprio handle. No sidecar, um escopo por `instance` do `n3x.yaml`; no controller, um escopo por plugin, com instância `""`. Todos os escopos de um plugin no mesmo processo dividem a mesma conta, e portanto a mesma cota. Mapas de escopos diferentes são distintos mesmo com o mesmo nome. Motivo: cada `New` começa com estado próprio, como os campos da instância, e duas instâncias do `n3x.example` não somam a mesma contagem
   - **Momento (hipótese):** permitido enquanto o escopo está aberto. O runtime sela o escopo quando o `New` retorna. Uma tarefa de fundo iniciada no `New` que chame `NewMap` antes do selo também é aceita. Motivo: cada mapa aloca 64 partes fora da cota, e criar mapas por requisição vazaria memória sem contabilidade
   - **Nome (hipótese):** casa com `^[a-z][a-z0-9_]{0,31}$` e é único no escopo. Aparece em mensagens de panic e no campo `map` do log de item recusado; nunca é rótulo de métrica
   - **Panics** (mensagem sempre começa com `memory:` e cita plugin, instância e mapa, nunca chave ou valor):
@@ -480,7 +489,7 @@ _, errMax := rt.NewAccount("giustech.outro", 512<<10)
 - Tipo: config (contrato de arquivo; o schema completo dos arquivos é das FDDs 15 e 30, que aplicam estas regras)
 - Assinatura/Rota: `runtime.plugin_limits["<id>"].memory.max_bytes`
 - Método: n/a
-- Semântica (hipótese de lugar e de forma; o nome `memory.max_bytes` vem do ADR-017):
+- Semântica (lugar e forma confirmados; o nome `memory.max_bytes` vem do ADR-017):
   1. Limites de runtime de um plugin (memória aqui; tarefas de fundo e conexões na FDD 06) valem por ID de plugin e por processo. Nunca ficam na `config` tipada do plugin, porque não são config de domínio, não devem entrar no schema nem no `schema-check` e não pertencem a uma instância. Também não ficam no item de instância de `plugins`, porque o plugin pode ter várias instâncias e o core nem aparece ali
   2. Ficam em `runtime.plugin_limits["<id>"]`, com a mesma forma no `n3x.yaml` do serviço e no do controller. Cada recurso tem um sub-bloco com o nome do recurso: `memory.max_bytes` aqui; a FDD 06 acrescenta os seus no mesmo bloco (sugestão: `background.max_tasks` e `dial.max_conns`)
   3. Bloco, chave ou campo ausente: vale o padrão do SDK (`DefaultProxyMaxBytes` no sidecar, `DefaultControllerMaxBytes` no controller)

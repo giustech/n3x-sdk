@@ -51,7 +51,7 @@ Esta entrevista achou três problemas novos:
 
 **Restrições**
 - O contrato usa só `net/http`, `context`, grpc-go e widgets; o Echo nunca aparece (ADR-018 e ADR-011)
-- `controller/` não importa `proxy/` (hipótese, simetria do ADR-011); as regras comuns às duas metades moram num pacote interno do SDK
+- `controller/` não importa `proxy/` (confirmado, simetria do ADR-011); as regras comuns às duas metades moram num pacote interno do SDK
 - Sem cgo e sem pacotes internos do `n3x-controller` (ADR-011)
 - Capacidades como interfaces opcionais, sem método genérico de execução, e registro sem `init()` (ADR-015)
 - `falho` só pelo host; o plugin não consegue se desligar sozinho (HLD do `n3x-sdk`, "Segurança")
@@ -62,11 +62,11 @@ Esta entrevista achou três problemas novos:
 - Documentação e mensagens em pt-BR; identificadores, valores de rótulo e nomes de evento em inglês
 
 **Rastreabilidade**
-- PRD 1.5: FR-013 (inteiro), FR-011 (registro de serviços, telas e schema; dependências; obrigatório e opcional; identidade do chamador; panic contido; API pública entre plugins), FR-008 (banner por plugin degradado ou falho; telas de plugin no menu), FR-009 (core falho ou degradado: só o root entra); critérios de aceite "plugin novo com uma página e um cartão aparece no painel sem mudar repositórios do core" e "plugin opcional que falha sobe desligado e aparece como falho"
+- PRD 1.5: FR-013 (inteiro), FR-011 (registro de serviços, telas e schema; dependências; obrigatório e opcional; identidade do chamador; panic contido; API pública entre plugins), FR-008 (banner por plugin degradado ou falho; telas de plugin no menu), FR-009 (core falho ou degradado: só o root entra); critérios de aceite "plugin novo com uma página e um cartão aparece no painel sem mudar repositórios do core" e "plugin opcional que falha sobe desligado e aparece como falho" (vale para falha operacional de `New`/`Start` e panic; config inválida e registro recusado impedem a subida)
 - ADRs do `n3x-sdk`: ADR-004, ADR-011, ADR-012, ADR-015, ADR-016, ADR-017, ADR-018, ADR-019, ADR-021 e ADR-022; do `n3x-controller`: ADR-001, ADR-002, ADR-003, ADR-007 e ADR-008; do `n3x-plugin-core`: ADR-009
 - FDDs aplicadas: 01 (`OwnsGRPCService`, `OwnsRoute`, `FieldError`, notação de caminho), 02 (`ConfigSchemer`, `DecodeConfig`, `PrefixErrors`), 03 (`plugin.Secret`), 04 (`memory.Handle`, cota de 64 MiB), 05 (modelo de `Define` e `Instantiate`), 06 (`telemetry/`, `Background`, `Dial`, `Sleep` e limites)
 - Lacunas do README:
-  - **L-52 fechada aqui:** a API pública de um plugin para outros plugins é gRPC em processo. O provedor registra os serviços que oferece a outros plugins na capacidade nova `PluginAPI(r)`; o consumidor obtém a conexão com `env.Dependency(id)`, só para IDs declarados em `controller.depends_on`. O host encaminha a chamada em processo, com as mensagens serializadas (nenhum ponteiro compartilhado), os mesmos interceptors de recover, prazo, métricas e log, e o `Caller` imposto com o papel novo `RolePlugin` (contrato 8) (hipótese)
+  - **L-52 fechada aqui:** a API pública de um plugin para outros plugins é gRPC em processo. O provedor registra os serviços que oferece a outros plugins na capacidade nova `PluginAPI(r)`; o consumidor obtém a conexão com `env.Dependency(id)`, só para IDs declarados em `controller.depends_on`. O host encaminha a chamada em processo, com as mensagens serializadas (nenhum ponteiro compartilhado), os mesmos interceptors de recover, prazo, métricas e log, e o `Caller` imposto com o papel novo `RolePlugin` (contrato 8) (confirmado; requer addendum ao ADR-015 e ao ADR-007 do controller no Workflow 3)
   - **L-56 fechada aqui:** esta FDD define em `controller/ui` os tipos mínimos `ui.Widget` (interface selada) e `ui.Query` (struct opaca com curingas do path e query string). A FDD 10 completa o catálogo, o renderizador e os métodos de paginação, ordenação e filtros da `Query`, sempre por adição (contrato 5)
   - **L-53 preparada (fecha na FDD 11):** `ctrl.Routes` é implementada só pela plataforma, então a FDD 11 acrescenta o registro dos handlers de `Form` e `Action` como métodos novos, sem quebrar plugins. A tabela de rotas é indexada por método e padrão; `Page` ocupa só `GET`; o valor zero de `Role` fica reservado para "não declarado", que em `Form` e `Action` vale root (contrato 4)
   - **L-36 não é fechada aqui:** o critério de `falho` em runtime é da FDD 32. O contrato só garante que `falho` é decidido pelo host e é terminal na v1 (contrato 9)
@@ -77,6 +77,22 @@ Esta entrevista achou três problemas novos:
   - FDD 02: `ctrl.Define[C]` implementa `plugin.ConfigSchemer` e chama `plugin.DecodeConfig[C]` (contrato 1)
   - FDD 04: `ctrl.Env.Memory()` devolve o `memory.Handle` do escopo do plugin, com instância `""` e cota padrão de 64 MiB (contrato 7)
   - FDD 06 (P-05 dela): `ctrl.Env` usa `*telemetry.Metrics` e `*slog.Logger`; ganha `Background`, `Dial`, `HTTPClient` e `ctrl.Sleep` com as mesmas regras da metade de proxy; os limites vêm de `runtime.plugin_limits` do `n3x.yaml` do controller; o rótulo `instance` fica vazio (contrato 7)
+
+**Decisões aprovadas na clarificação**
+- Plugin opcional com config inválida (`Check`/`Validate`) ou registro recusado impede o controller de subir, igual ao obrigatório; só falha operacional de `New`/`Start` e panic deixam um opcional `falho` (sobe desligado), então o PRD FR-011 precisa ser esclarecido no Workflow 3 (hoje diz que opcional que falha sobe desligado)
+- API entre plugins (L-52): gRPC em processo com mensagens serializadas, capacidade `PluginAPI` (opt-in do provedor) e `env.Dependency(id)` só para IDs de `depends_on`, com o papel novo `RolePlugin` no `Caller`; requer addendum ao ADR-015 (capacidade e papel) e ao ADR-007 do controller no Workflow 3
+- O diretório `controller/` usa `package ctrl` (sem alias); a exceção à regra de nome de pacote fica registrada no lint
+- `Cards.Add(id, papel, fn CardFunc)` difere do ADR-018 e do exemplo do HLD (`c.Add(id, widget)`): a FDD-08 prevalece e o ADR-018/HLD devem ser atualizados
+- As demais hipóteses numéricas, de teste e estruturais de baixo risco ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Prefixos de `Path` em `PluginAPI` (linhas 2 a 5 da tabela do contrato 3), prefixo de `too_many` em páginas e cartões, e a condição `InMenu` repetido no texto do contrato 4 (hoje só no contrato 11) ainda precisam ser explicitados
+- `Stop` é chamado só para plugins cujo `Start` terminou com sucesso (ou que não têm `Start`); unificar o texto (hoje diverge entre L161/L199 e o contrato 2)
+- Origem do limite de 32 dependências na cardinalidade (provável `depends_on` da FDD 01 = `MaxDependsOn`); `internal/lifecycle` precisa ser confirmado contra a FDD 06 e registrado no HLD/ADR-011
+- `Validate`, `New` e as capacidades de registro não têm `ctx`; o host só abandona a goroutine que travar (nota para o guia do autor, FDD 47)
+- Os histogramas do controller (`card_duration_seconds`) devem declarar que têm `_sum` (no sidecar não têm)
+- Dependem de outros repositórios: FDDs 09 e 10 (neste repo), 20, 22, 24, 30, 32 a 35, 36 a 45 e 47; HLD do n3x-controller (ordem de subida Init/Start, rótulo de rota `:id`)
+- Divergências para o Workflow 3: capacidades e papéis novos fora do ADR-015, `Plugin` com `CheckHost`/`HostFacts`/`HostValidator`, `Env` sem a config tipada (PRD FR-013 diz que `env` traz config tipada), pacotes `controller/ui` e `internal/lifecycle` fora da lista do HLD
 
 ---
 
@@ -121,7 +137,7 @@ Esta entrevista achou três problemas novos:
 - Leitura do `n3x-plugin.yaml` e campos `controller.required` e `depends_on`: FDD 01 (SDK-01)
 - Validação do `n3x.yaml` do controller, inclusive `runtime.plugin_limits` e as faixas dos prazos: FDD 30 (CTL-01)
 - Banco do plugin: responsabilidade de cada plugin (ADR-002 do `n3x-controller`)
-- Fora da v1, por adição em minor quando houver caso real (hipótese): papel declarado por método gRPC (ADR-007), retentativa de `Start`, reinício de plugin `falho` em runtime, delegação da identidade do usuário na API entre plugins, prazo de cartão ajustável, cartão com tamanho ou ordem declarados
+- Fora da v1, por adição em minor quando houver caso real (confirmado): papel declarado por método gRPC (ADR-007), retentativa de `Start`, reinício de plugin `falho` em runtime, delegação da identidade do usuário na API entre plugins, prazo de cartão ajustável, cartão com tamanho ou ordem declarados
 
 ---
 
@@ -134,7 +150,7 @@ Esta entrevista achou três problemas novos:
    - se o tipo `C` implementa `ctrl.Validator`, chama `Validate()` sobre a config decodificada, com os `plugin.Secret` já abertos
    - devolve `nil` ou um erro com `plugin.ErrInvalidConfig` e a lista de problemas, com caminhos relativos à seção
    - o `CheckHost` faz o mesmo e, sem erro até ali, chama `ValidateHost(h)` se `C` implementa `ctrl.HostValidator` (contrato 15 da FDD 09; L-63)
-3. O host prefixa os erros com `plugin.PrefixErrors(err, plugin.PathKey("plugins", id.String()))`, junta os de todos os plugins e, se houver algum, encerra sem chamar nenhum `New`, seja o plugin obrigatório ou opcional (hipótese). O subcomando `n3x-controller validate` faz só esta fase (FDD 30).
+3. O host prefixa os erros com `plugin.PrefixErrors(err, plugin.PathKey("plugins", id.String()))`, junta os de todos os plugins e, se houver algum, encerra sem chamar nenhum `New`, seja o plugin obrigatório ou opcional (confirmado). O subcomando `n3x-controller validate` faz só esta fase (FDD 30).
 4. **Fase de instâncias, um plugin por vez:** o core primeiro (FDD 09, hipótese de lá) e depois os demais em ordem de dependência (dependências primeiro):
    - o host cria a conta e o escopo de memória (FDD 04), a conta e o escopo de métricas (FDD 06), o logger, o `StateCell`, os contadores de tarefas e de conexões e a visão de `Dependency`, e monta o `Env`; para o core, embrulha esse `Env` num `ctrl.CoreEnv` (com `Credentials`, `Sessions`, `ControllerManifest` e `CallerIP`, contrato 14 da FDD 09), que nunca é montado para outro plugin
    - chama `p.Instantiate(config, env, opener)`, que decodifica, roda a `Validate` de novo e chama `New(cfg, env)`; `(nil, nil)` vira `ErrNilInstance`
@@ -150,16 +166,16 @@ Esta entrevista achou três problemas novos:
 
 | Onde falhou | Plugin obrigatório | Plugin opcional |
 | --- | --- | --- |
-| `Check` ou `CheckHost` (schema, `Validate` ou `ValidateHost`) | O controller não sobe | O controller não sobe (hipótese) |
+| `Check` ou `CheckHost` (schema, `Validate` ou `ValidateHost`) | O controller não sobe | O controller não sobe (confirmado) |
 | `HostValidator` fora do core (fase de config) ou `CheckPrivileged` com erro depois do `New` | O controller não sobe | O controller não sobe (FDD 09) |
-| Recusa de registro (`Close` com erro, inclusive na tabela pública) | O controller não sobe | O controller não sobe (hipótese) |
+| Recusa de registro (`Close` com erro, inclusive na tabela pública) | O controller não sobe | O controller não sobe (confirmado) |
 | `New` com erro ou panic | O controller não sobe | `falho`, sem `Start`, sem registros |
-| `Start` com erro, panic ou prazo estourado | O controller não sobe | `falho`, sem registros, sem nova tentativa (hipótese) |
-| Panic dentro de `GRPC`, `PluginAPI`, `Routes` ou `Cards` | O controller não sobe | `falho`; o host chama `Stop` para liberar o que o `Start` abriu (hipótese) |
+| `Start` com erro, panic ou prazo estourado | O controller não sobe | `falho`, sem registros, sem nova tentativa (confirmado) |
+| Panic dentro de `GRPC`, `PluginAPI`, `Routes` ou `Cards` | O controller não sobe | `falho`; o host chama `Stop` para liberar o que o `Start` abriu (confirmado) |
 
-- Recusa de registro é violação de contrato (plugin com erro ou malicioso), não falha operacional; por isso vale para os dois, como na regra do ADR-019 ("a subida é recusada")
+- Config inválida (`Check`, `Validate`) e recusa de registro são violação de contrato (plugin com erro ou malicioso), não falha operacional; por isso valem para os dois, como na regra do ADR-019 ("a subida é recusada"). Só falha operacional de `New` ou `Start` e panic deixam um opcional `falho`, que sobe desligado (decisão confirmada na clarificação; esclarece o Workflow 3 do PRD FR-011)
 - Quando a subida é abortada, todo plugin cujo `Start` já tinha terminado com sucesso recebe `Stop`, na ordem inversa
-- `Validate`, `New` e as capacidades de registro não recebem `ctx`; o host os vigia com o mesmo `runtime.plugin_start_timeout` e trata o estouro como falha da etapa (hipótese)
+- `Validate`, `New` e as capacidades de registro não recebem `ctx`; o host os vigia com o mesmo `runtime.plugin_start_timeout` e trata o estouro como falha da etapa (confirmado)
 
 **Fluxo de uma chamada gRPC de sidecar** (servidor da FDD 33)
 - O host autentica, aplica o papel `sidecar` (ADR-007) e monta um `ctx` com prazo `min(prazo do cliente, runtime.plugin_call_timeout)`, `request_id` (de `x-request-id` ou novo) e `Caller` `{sidecar, serviço, instância, sessão}`
@@ -170,7 +186,7 @@ Esta entrevista achou três problemas novos:
 - O host confere a sessão e o papel mínimo da rota (`Role.Meets`); sem papel, 403
 - O host monta `ui.NewQuery(curingas, query string)`; query fora dos limites dá 400
 - O host chama a `PageFunc` com `ctx` de `runtime.plugin_call_timeout`, `request_id` e `Caller` `{read ou root, usuário}`
-- Resultado: widget, que o renderizador (FDD 10) transforma em página inteira ou fragmento htmx; `ErrNotFound` dá 404; `ErrBadRequest` dá 400; prazo estourado dá 504; outro erro, panic ou `(nil, nil)` dá 500 com página genérica (hipótese de mapeamento)
+- Resultado: widget, que o renderizador (FDD 10) transforma em página inteira ou fragmento htmx; `ErrNotFound` dá 404; `ErrBadRequest` dá 400; prazo estourado dá 504; outro erro, panic ou `(nil, nil)` dá 500 com página genérica (confirmado)
 
 **Fluxo de um cartão** (visão geral da FDD 35)
 - A cada renderização da visão geral (e a cada polling de 5 s), o host chama a `CardFunc` de cada cartão visível para o papel do usuário, em paralelo, com `ctx` de 1 s (`CardTimeout`)
@@ -196,7 +212,7 @@ Esta entrevista achou três problemas novos:
 **Fluxo de desligamento** (SIGTERM; implementação da FDD 32)
 1. `/ready` passa a 503; `GracefulStop` do gRPC e `Shutdown` do painel com `runtime.shutdown_timeout` (20 s)
 2. O host cancela o `ctx` das tarefas de fundo e espera até `ShutdownGrace` (2 s)
-3. `Stop(ctx)` de cada plugin na ordem inversa da subida, com 5 s cada, só para plugins cujo `Start` terminou com sucesso; quem estoura é abandonado com log, e o host segue para o próximo (hipótese)
+3. `Stop(ctx)` de cada plugin na ordem inversa da subida, com 5 s cada, só para plugins cujo `Start` terminou com sucesso; quem estoura é abandonado com log, e o host segue para o próximo (confirmado)
 4. A API entre plugins segue funcionando em processo até o `Stop` do provedor, então o `Stop` de um consumidor ainda alcança as dependências dele
 
 **Fluxos alternativos e exceções**
@@ -209,7 +225,7 @@ Esta entrevista achou três problemas novos:
 - **`Caller` ausente:** no `Start`, no `Stop`, nas tarefas de fundo e no `Login` do core (rota pública, FDD 09), `ctrl.Caller(ctx).IsZero()` é verdadeiro
 - **`Validate` no `n3x-controller validate` sem a chave AES:** os `plugin.Secret` trazem o texto recebido; a `Validate` não pode depender do valor aberto de um segredo, só de `IsZero` (regra do guia do autor)
 - **Página com curinga para um recurso que não existe:** a `PageFunc` devolve `ctrl.ErrNotFound` e o host responde 404
-- **Plugin oscilando entre `ok` e `degradado`:** cada transição conta em `n3x_controller_plugin_state_changes_total`; o log de transição é limitado a 1 por segundo por plugin, com a contagem suprimida (hipótese)
+- **Plugin oscilando entre `ok` e `degradado`:** cada transição conta em `n3x_controller_plugin_state_changes_total`; o log de transição é limitado a 1 por segundo por plugin, com a contagem suprimida (confirmado)
 
 **Diagramas**
 
@@ -294,7 +310,7 @@ flowchart TD
 - Tipo: sdk (API Go)
 - Assinatura/Rota:
   ```go
-  // Diretório controller/, pacote Go ctrl (hipótese): o plugin importa
+  // Diretório controller/, pacote Go ctrl (confirmado): o plugin importa
   // "github.com/giustech/n3x-sdk/controller" e usa ctrl.X sem alias,
   // sem colidir com o próprio pacote controller do plugin.
   package ctrl
@@ -334,7 +350,7 @@ flowchart TD
   - `Check`: `plugin.DecodeConfig[C](config, opts...)`; erro de config volta como está (`plugin.ErrInvalidConfig` e `FieldErrors`, caminhos relativos à seção). Sem erro, se `C` ou `*C` implementa `Validator`, chama `Validate()`. Não chama `New`, não recebe `Env` e não usa `recover` (o host chama sob `recover`)
   - Erro da `Validate`:
     - se é ou embrulha `plugin.FieldErrors` ou `plugin.FieldError`, valem `Path`, `Rule` e `Detail` do autor, com caminho relativo à raiz da seção do plugin (caminho vazio é a raiz)
-    - senão, vira um único `FieldError{Path: "", Rule: "validate", Detail: <texto do erro>}` (hipótese)
+    - senão, vira um único `FieldError{Path: "", Rule: "validate", Detail: <texto do erro>}` (confirmado)
     - em todo caso, o `Detail` é saneado (caracteres de controle viram espaço) e cortado em 512 caracteres (`plugin.MaxDescLength`), e a lista é cortada em 100 itens com `truncated` (`plugin.MaxConfigErrors`)
     - o erro devolvido satisfaz `errors.Is(err, plugin.ErrInvalidConfig)` e `errors.As(err, &fe)` com `var fe plugin.FieldErrors` (embrulho do pacote `ctrl` com `Unwrap() []error`)
   - **O que a `Validate` pode checar:** regras entre campos e de domínio que as tags não expressam (ex.: nomes repetidos numa lista, `redis` obrigatório quando `mode` é `redis`, custo do bcrypt). Ela é pura: não faz I/O, não loga, não guarda estado e não altera a config. Recebe os `plugin.Secret` já abertos quando o host passa o opener; no `validate` sem chave, recebe o texto como veio. O `Detail` nunca cita o valor recebido (regra da FDD 02, conferida pelo canário do kit, FDD 12)
@@ -441,8 +457,8 @@ plugins["giustech.quota"].limits[1].service: serviço repetido; já aparece em l
   const (
       DefaultStartTimeout = 30 * time.Second // padrão de runtime.plugin_start_timeout
       DefaultCallTimeout  = 10 * time.Second // padrão de runtime.plugin_call_timeout
-      StopTimeout         = 5 * time.Second  // fixo na v1 (hipótese)
-      CardTimeout         = 1 * time.Second  // fixo na v1 (ADR-018; hipótese de não ajustável)
+      StopTimeout         = 5 * time.Second  // fixo na v1 (confirmado)
+      CardTimeout         = 1 * time.Second  // fixo na v1 (ADR-018; confirmado como não ajustável)
       ShutdownGrace       = 2 * time.Second  // tarefas de fundo, igual à metade de proxy
   )
   ```
@@ -457,14 +473,14 @@ plugins["giustech.quota"].limits[1].service: serviço repetido; já aparece em l
 
 | Chamada | `ctx` | Prazo | Origem | Ajuste |
 | --- | --- | --- | --- | --- |
-| `Validate` (via `Check`) e `New` | sem `ctx` | vigiadas por `runtime.plugin_start_timeout` | hipótese | não |
+| `Validate` (via `Check`) e `New` | sem `ctx` | vigiadas por `runtime.plugin_start_timeout` | confirmado | não |
 | `Start` | sim | `runtime.plugin_start_timeout`, padrão 30 s | HLD do `n3x-controller` | `n3x.yaml` (FDD 30) |
-| `GRPC`, `PluginAPI`, `Routes`, `Cards` | sem `ctx` | vigiadas por `runtime.plugin_start_timeout` | hipótese | não |
+| `GRPC`, `PluginAPI`, `Routes`, `Cards` | sem `ctx` | vigiadas por `runtime.plugin_start_timeout` | confirmado | não |
 | Handler gRPC unário (sidecar) | sim | `min(prazo do cliente, runtime.plugin_call_timeout)`, padrão 10 s | HLD do `n3x-controller` | `n3x.yaml` |
 | Handler gRPC de stream | sim, sem teto total | 1 s por mensagem processada (FDD 33) | HLD do `n3x-controller` | não |
 | Página (`PageFunc`) | sim | `runtime.plugin_call_timeout`, padrão 10 s | HLD do `n3x-sdk` | `n3x.yaml` |
 | Cartão (`CardFunc`) | sim | 1 s | ADR-018 | não |
-| Handler de `PluginAPI` unário | sim | `min(prazo do chamador, runtime.plugin_call_timeout)` | hipótese | `n3x.yaml` |
+| Handler de `PluginAPI` unário | sim | `min(prazo do chamador, runtime.plugin_call_timeout)` | confirmado | `n3x.yaml` |
 | Tarefa de fundo | sim, sem prazo | cancelado no desligamento, com 2 s de folga | FDD 06 | não |
 | `Stop` | sim | 5 s | HLD do `n3x-controller` | não |
 
@@ -498,7 +514,7 @@ capsVal := ctrl.CapabilitiesOf(controller.Plugin(), Example{})
       grpc.ServiceRegistrar // RegisterService(desc *grpc.ServiceDesc, impl any)
   }
 
-  const MaxServices = 16 // por tabela (sidecar e plugin), por plugin (hipótese)
+  const MaxServices = 16 // por tabela (sidecar e plugin), por plugin (confirmado)
   ```
 - Método: registro na subida; depois, chamadas gRPC unárias e de stream pelo nome do método
 - Semântica:
@@ -514,7 +530,7 @@ capsVal := ctrl.CapabilitiesOf(controller.Plugin(), Example{})
 | 4 | Mesmo `ServiceName` já registrado na mesma tabela | `duplicate_service` | `grpc["<serviço>"]` |
 | 5 | Mais de `MaxServices` na tabela | `too_many` | `grpc["<serviço>"]` |
 
-  - Majors diferentes do mesmo plugin (`.v1.X` e `.v2.X`) e mais de um serviço no mesmo pacote são aceitos; o SDK não impõe "um serviço por major" (hipótese; o core pode ter `Core` e o serviço da rota pública, L-11 na FDD 36)
+  - Majors diferentes do mesmo plugin (`.v1.X` e `.v2.X`) e mais de um serviço no mesmo pacote são aceitos; o SDK não impõe "um serviço por major" (confirmado; o core pode ter `Core` e o serviço da rota pública, L-11 na FDD 36)
   - Dois plugins nunca registram o mesmo serviço, porque cada um só registra no próprio namespace e os IDs são únicos (FDD 20); o host ainda confere na montagem
   - **Tabela pública (FDD 09, contrato 10):** `PublicGRPC(r)` do core recebe `Registrar.Public()`, visão da terceira tabela, `TablePublic`, chamada depois de `GRPC` e antes de `PluginAPI`. Ela aceita um único serviço, com um único método unário `Login`, sem sessão na `17443`; as regras próprias (`public_method`, `public_overlap`, `too_many`, além de `invalid_service` e `foreign_service`) são acumuladas e devolvidas no mesmo `Close`, com caminho `public_grpc["<serviço>"]`. O host nunca chama `PublicGRPC` de outro plugin, já recusado pelo `CheckPrivileged`
 
@@ -573,8 +589,8 @@ grpc["n3x.plugins.giustech.ratelimit.v2.RateLimit"]: a implementação não sati
   )
 
   const (
-      MaxPages        = 64  // hipótese
-      MaxCards        = 16  // hipótese
+      MaxPages        = 64  // confirmado
+      MaxCards        = 16  // confirmado
       MaxPathLen      = 256 // bytes do path relativo
       MaxPathParams   = 4
       MaxMenuLabelLen = 48  // caracteres
@@ -582,8 +598,8 @@ grpc["n3x.plugins.giustech.ratelimit.v2.RateLimit"]: a implementação não sati
   ```
 - Método: `Page` responde a `GET` (e `HEAD`, resolvido pelo host); cartões não têm rota própria
 - Semântica:
-  - **Path relativo ao prefixo** (hipótese): o plugin escreve `/negacoes`, e o padrão montado é `id.RoutePrefix()` mais o path sem a barra inicial: `/plugins/n3x/example/negacoes`. `/` sozinho é a página raiz do plugin
-  - **Gramática** (hipótese, sintaxe de curinga do `net/http`):
+  - **Path relativo ao prefixo** (confirmado): o plugin escreve `/negacoes`, e o padrão montado é `id.RoutePrefix()` mais o path sem a barra inicial: `/plugins/n3x/example/negacoes`. `/` sozinho é a página raiz do plugin
+  - **Gramática** (confirmado, sintaxe de curinga do `net/http`):
     ```text
     path     = "/" | "/" segmento { "/" segmento }      ; até 256 bytes, sem barra no fim
     segmento = literal | "{" nome "}"
@@ -596,7 +612,7 @@ grpc["n3x.plugins.giustech.ratelimit.v2.RateLimit"]: a implementação não sati
   - **Menu:** `InMenu(label)` põe a página no menu, com rótulo de 1 a 48 caracteres, sem quebra de linha; recusado em padrão com curinga (não há valor para o link). A ordem e o agrupamento do menu são da FDD 35 (sugestão: por plugin, na ordem de registro)
   - **Cartão:** `id` casa com `^[a-z][a-z0-9_]{0,31}$`, único no plugin; papel `RoleRead` ou `RoleRoot` (cartão de root só aparece para root). A `CardFunc` roda a cada renderização da visão geral (ADR-008), em paralelo com os outros cartões, com prazo de 1 s; falha mostra "indisponível". O host deriva o ID do elemento do id do plugin e do cartão (FDD 35)
   - **Concorrência:** `PageFunc` e `CardFunc` são chamadas por várias requisições ao mesmo tempo
-  - **Erro da `PageFunc`:** embrulha `ErrNotFound` dá 404; embrulha `ErrBadRequest` dá 400; `ctx` estourado dá 504; outro erro, panic ou `(nil, nil)` dá 500 com página genérica. O texto do erro nunca vai para a página; vai para o log do host (hipótese)
+  - **Erro da `PageFunc`:** embrulha `ErrNotFound` dá 404; embrulha `ErrBadRequest` dá 400; `ctx` estourado dá 504; outro erro, panic ou `(nil, nil)` dá 500 com página genérica. O texto do erro nunca vai para a página; vai para o log do host (confirmado)
   - Regras de registro, com um problema por chamada, na ordem: `invalid_role`, `nil_handler`, `path_format` (vazio, sem barra inicial ou acima de 256 bytes), `foreign_route` (padrão montado reprovado por `id.OwnsRoute`, FDD 01), `path_format` (gramática dos segmentos), `duplicate_route`, `menu_label`, `menu_wildcard`, `too_many`; nos cartões: `card_id`, `invalid_role`, `nil_handler`, `duplicate_card`, `too_many`. Caminhos: `routes["<path>"]` e `cards["<id>"]`, pela notação da L-34
   - **Pronto para a L-53:** a tabela de rotas é indexada por método e padrão; `Page` ocupa o `GET`. A FDD 11 acrescenta métodos a `Routes` (por exemplo, um registro de handler de envio com papel e CSRF aplicados pelo host), o que é compatível porque só a plataforma implementa `Routes`
 
@@ -665,11 +681,11 @@ cards["Excedidos"]: id de cartão fora de ^[a-z][a-z0-9_]{0,31}$ [card_id]
   func (q Query) Has(key string) bool
 
   const (
-      MaxQueryKeys     = 32   // chaves distintas na query string (hipótese)
-      MaxQueryValues   = 16   // valores por chave (hipótese)
-      MaxQueryKeyLen   = 64   // bytes (hipótese)
-      MaxQueryValueLen = 1024 // bytes (hipótese)
-      MaxParamLen      = 256  // bytes por curinga (hipótese)
+      MaxQueryKeys     = 32   // chaves distintas na query string (confirmado)
+      MaxQueryValues   = 16   // valores por chave (confirmado)
+      MaxQueryKeyLen   = 64   // bytes (confirmado)
+      MaxQueryValueLen = 1024 // bytes (confirmado)
+      MaxParamLen      = 256  // bytes por curinga (confirmado)
   )
 
   var ErrInvalidQuery = errors.New("ui: query fora dos limites")
@@ -678,7 +694,7 @@ cards["Excedidos"]: id de cartão fora de ^[a-z][a-z0-9_]{0,31}$ [card_id]
 - Semântica:
   - `Widget` é interface (e não struct) porque a função de página devolve qualquer widget do catálogo; o método não exportado fecha o conjunto. A FDD 10 pode acrescentar métodos não exportados ao selo sem quebrar plugins
   - `Query` é struct opaca para ganhar métodos por minor: a FDD 10 acrescenta paginação, ordenação e filtros (por exemplo `Page()`, `Sort()` e `Filter()`) e pode reservar chaves da query string para o renderizador
-  - `NewQuery` recusa com `ErrInvalidQuery`: mais de 32 chaves, mais de 16 valores numa chave, chave acima de 64 bytes, valor acima de 1024 bytes, curinga acima de 256 bytes ou texto fora de UTF-8. O host responde 400 (FDD 35) e limita a query string bruta a 4 KiB antes de decodificar (hipótese)
+  - `NewQuery` recusa com `ErrInvalidQuery`: mais de 32 chaves, mais de 16 valores numa chave, chave acima de 64 bytes, valor acima de 1024 bytes, curinga acima de 256 bytes ou texto fora de UTF-8. O host responde 400 (FDD 35) e limita a query string bruta a 4 KiB antes de decodificar (confirmado)
   - Os valores chegam decodificados (sem `%xx`); o plugin os trata como texto opaco e nunca os põe em rótulo de métrica
 
 **Exemplo de requisição**
@@ -736,8 +752,8 @@ q, err := ui.NewQuery(map[string]string{"service": "pedidos"},
   - `Meets`: `RoleRoot` atende `RoleRead` e `RoleRoot`; `RoleRead` atende só `RoleRead`; `RoleSidecar` atende só `RoleSidecar`; `RolePlugin` atende só `RolePlugin`; o valor zero não atende nada
   - Campos por papel (`Valid`): `RoleRead` e `RoleRoot` exigem `User` e mais nada; `RoleSidecar` exige `Service` e `Instance` (`Session` opcional); `RolePlugin` exige `Plugin`; os demais campos ficam vazios
   - **Quando falta:** `Start`, `Stop`, tarefas de fundo e a rota pública de login do core (FDD 09) não têm chamador; `Caller(ctx).IsZero()` é verdadeiro. Handler de página, cartão, gRPC e `PluginAPI` sempre tem
-  - **Sem IP e sem ID de sessão do painel** (hipótese): o ID da sessão é segredo e nunca chega a plugin; o IP é dado pessoal e só o login do core precisa dele, pela capacidade da FDD 09 (L-02)
-  - **Origem:** o host sobrescreve o `Caller` em toda entrada (servidor gRPC, painel e API entre plugins), então um `ContextWithCaller` feito por um plugin nunca alcança outro plugin. A FDD 24 pode recusar o uso de `ContextWithCaller` em código de plugin (hipótese)
+  - **Sem IP e sem ID de sessão do painel** (confirmado): o ID da sessão é segredo e nunca chega a plugin; o IP é dado pessoal e só o login do core precisa dele, pela capacidade da FDD 09 (L-02)
+  - **Origem:** o host sobrescreve o `Caller` em toda entrada (servidor gRPC, painel e API entre plugins), então um `ContextWithCaller` feito por um plugin nunca alcança outro plugin. A FDD 24 pode recusar o uso de `ContextWithCaller` em código de plugin (confirmado)
   - Valores de texto em inglês (`read`, `root`, `sidecar`, `plugin`), usados em logs; a documentação chama `read` de "leitura"
   - `Caller` com 0 alocações; `Identity` é comparável com `==`
 
@@ -811,10 +827,10 @@ func (p *Example) Report(ctx context.Context, r *examplev1.ReportReq) (*examplev
 - Semântica:
   - **Um `Env` por plugin**, montado pelo host antes do `New`; todos os métodos são seguros entre goroutines
   - **Memória (pedido da FDD 04):** `Memory()` devolve `scope.Handle()` do escopo único do plugin (instância `""`), com cota `runtime.plugin_limits["<id>"].memory.max_bytes` ou `memory.DefaultControllerMaxBytes` (64 MiB). `memory.NewMap` só no `New`
-  - **Métricas (pedido da FDD 06):** `*telemetry.Metrics` do `telemetry.Account.NewScope("")`; prefixo `n3x_<namespace>_<nome>_`; rótulos automáticos `plugin` (ID) e `instance` com valor vazio, que o exportador do host omite (hipótese; no texto do Prometheus, valor vazio equivale a rótulo ausente, o que também evita o `exported_instance` da I-11 da FDD 06). Criação só no `New`
+  - **Métricas (pedido da FDD 06):** `*telemetry.Metrics` do `telemetry.Account.NewScope("")`; prefixo `n3x_<namespace>_<nome>_`; rótulos automáticos `plugin` (ID) e `instance` com valor vazio, que o exportador do host omite (confirmado; no texto do Prometheus, valor vazio equivale a rótulo ausente, o que também evita o `exported_instance` da I-11 da FDD 06). Criação só no `New`
   - **Logs (pedido da FDD 06):** `telemetry.PluginLogger(h, id, "")`: campos `component=plugin` e `plugin_id`; `request_id` vem do `ctx` nos métodos `*Context` (o host põe o valor em todo handler); `service` e `instance` ficam vazios e são omitidos. `plugin.Secret` sai como `***`
-  - **Tarefas de fundo (P-05 da FDD 06):** mesmo contrato da metade de proxy (contrato 2 da FDD 06): só no `New`; nome com `CheckTaskName`; limite por plugin de `background.max_tasks` (padrão 8, faixa de 1 a 64); início depois da subida de todos os plugins, antes de abrir as portas, uma vez (hipótese); `recover` com reinício por `BackgroundBackoff` (1 s a 60 s, jitter de 20%); `ctx` sem prazo, cancelado no desligamento com `ShutdownGrace` de 2 s. Tarefas de plugin `falho` não começam
-  - **Conexões (P-05 da FDD 06):** `Dial` e `HTTPClient` com o contrato 4 da FDD 06: redes `tcp`, `tcp4`, `tcp6` e `unix`; limite por plugin de `dial.max_conns` (padrão 16, faixa de 1 a 256); espera de vaga até o prazo do `ctx` (ou 5 s); rede de segurança de I/O de 30 s; cliente HTTP com teto de 10 s e sem `HTTP_PROXY`. Destinos reservados do controller (as portas `17443`, `17444` e `17091` do próprio processo em loopback) dão `ErrDialDenied` (hipótese; lista na FDD 32). É o caminho para o banco do plugin (ADR-002 do `n3x-controller`), com as receitas de connector da FDD 06
+  - **Tarefas de fundo (P-05 da FDD 06):** mesmo contrato da metade de proxy (contrato 2 da FDD 06): só no `New`; nome com `CheckTaskName`; limite por plugin de `background.max_tasks` (padrão 8, faixa de 1 a 64); início depois da subida de todos os plugins, antes de abrir as portas, uma vez (confirmado); `recover` com reinício por `BackgroundBackoff` (1 s a 60 s, jitter de 20%); `ctx` sem prazo, cancelado no desligamento com `ShutdownGrace` de 2 s. Tarefas de plugin `falho` não começam
+  - **Conexões (P-05 da FDD 06):** `Dial` e `HTTPClient` com o contrato 4 da FDD 06: redes `tcp`, `tcp4`, `tcp6` e `unix`; limite por plugin de `dial.max_conns` (padrão 16, faixa de 1 a 256); espera de vaga até o prazo do `ctx` (ou 5 s); rede de segurança de I/O de 30 s; cliente HTTP com teto de 10 s e sem `HTTP_PROXY`. Destinos reservados do controller (as portas `17443`, `17444` e `17091` do próprio processo em loopback) dão `ErrDialDenied` (confirmado; lista na FDD 32). É o caminho para o banco do plugin (ADR-002 do `n3x-controller`), com as receitas de connector da FDD 06
   - **Limites no `n3x.yaml` do controller:** `runtime.plugin_limits["<id>"]` aceita `memory.max_bytes`, `background.max_tasks` e `dial.max_conns` com a mesma forma e as mesmas faixas do sidecar; vale para a metade de controller (pedido à FDD 30)
   - **`ctrl.Sleep`:** mesma regra de `proxy.Sleep` (FDD 06, contrato 5), com o mesmo relógio interno trocado pelo kit
   - **Sem `proxy/`:** `controller/` não importa `proxy/`; as constantes e as funções de regra iguais às da metade de proxy moram num pacote interno do SDK (`internal/lifecycle`, hipótese) e um teste do SDK confere a igualdade com `proxy.DefaultMaxTasks`, `proxy.BackgroundBackoff` e as demais
@@ -883,7 +899,7 @@ func New(cfg types.ControllerConfig, env ctrl.Env) (ctrl.Instance, error) {
   - **Declaração do consumidor:** `Dependency(id)` só aceita IDs em `controller.depends_on` do manifesto do consumidor (FDD 01); fora disso, ou o próprio ID, `ErrNotDependency`. A dependência sobe antes (ordem de dependência, sem ciclos, FDD 20), então as chamadas só descem no grafo e não há espera circular
   - **Retorno:** o mesmo valor por ID (0 alocações depois da primeira chamada). `ErrNoPluginAPI` quando a dependência não registrou nenhum serviço em `PluginAPI`; `ErrDependencyFailed` quando ela está `falho`. O efeito disso no consumidor (falhar o `Start`, degradar) é escolha do consumidor; a política do host para dependências `falho` é da FDD 32
   - **Chamada:** só métodos dos serviços da tabela `plugin` do provedor; outro método dá `Unimplemented`. Mensagens serializadas nos dois sentidos (o provedor recebe e devolve cópias). `ctx` do handler do provedor novo, só com prazo `min(prazo do ctx, runtime.plugin_call_timeout)`, cancelamento, `request_id` (o do `ctx` do consumidor ou novo) e `Caller` `{plugin, <ID do consumidor>}`. Recover, métricas e log como no servidor gRPC. Provedor `falho` ou já parado: `Unavailable`; panic no provedor: `Internal`; prazo: `DeadlineExceeded`. Streams aceitos, sem teto total, com 1 s por mensagem processada (como na FDD 33)
-  - **Sem delegação de usuário na v1:** o provedor vê o plugin consumidor, não o usuário do painel que disparou a página do consumidor (hipótese; delegação entra numa minor, se houver caso real)
+  - **Sem delegação de usuário na v1:** o provedor vê o plugin consumidor, não o usuário do painel que disparou a página do consumidor (confirmado; delegação entra numa minor, se houver caso real)
   - **Custo:** serialização protobuf em processo, fora do caminho do tráfego; aceitável no controller (orçamento do HLD do `n3x-controller`)
 
 **Exemplo de requisição**
@@ -959,13 +975,13 @@ func (q *Quota) Start(ctx context.Context) error {
       Current() StateInfo
   }
 
-  const MaxStateReasonLen = 200 // caracteres (hipótese)
+  const MaxStateReasonLen = 200 // caracteres (confirmado)
   ```
 - Método: n/a
 - Semântica:
-  - **Canal empurrado** (hipótese, coerente com o "canal de estado" do ADR-002 e do HLD do `n3x-controller`): o plugin declara quando quiser, de qualquer goroutine; o host não consulta o plugin nem tem frequência de leitura. O host lê o valor atual (leitura atômica, 0 alocações) em cada banner renderizado e em cada scrape, e recebe cada transição por um observador (contrato 10)
+  - **Canal empurrado** (confirmado, coerente com o "canal de estado" do ADR-002 e do HLD do `n3x-controller`): o plugin declara quando quiser, de qualquer goroutine; o host não consulta o plugin nem tem frequência de leitura. O host lê o valor atual (leitura atômica, 0 alocações) em cada banner renderizado e em cada scrape, e recebe cada transição por um observador (contrato 10)
   - **Estado inicial:** `ok`, antes do `New`. O plugin pode declarar `degradado` no `New` ou no `Start` e subir degradado (ex.: banco fora do ar), em vez de falhar
-  - `Degraded(motivo)`: entra em `degraded`; já degradado com o mesmo motivo, nada muda; com outro motivo, troca o motivo e mantém `Since` (hipótese)
+  - `Degraded(motivo)`: entra em `degraded`; já degradado com o mesmo motivo, nada muda; com outro motivo, troca o motivo e mantém `Since` (confirmado)
   - `OK()`: volta a `ok` com motivo vazio; já em `ok`, nada muda
   - **`falho` é do host e é terminal na v1:** depois de `Fail`, `Degraded` e `OK` não têm efeito (o host loga uma vez `state_ignored`). Não existe volta sem reiniciar o processo. O critério de `falho` em runtime (L-36) é da FDD 32
   - **Motivo:** espaços das pontas removidos; caracteres de controle viram espaço; cortado em 200 caracteres; vazio vira "motivo não informado". Aparece no banner (escapado pelo painel) e no log, nunca em rótulo de métrica. O guia proíbe segredo, token, dado de usuário e valor de config no motivo
@@ -1058,7 +1074,7 @@ func (s *Store) confereTeto() {
   ```
 - Método: n/a
 - Semântica:
-  - **Por que no SDK** (hipótese, mesmo padrão do `telemetry.Registry` da FDD 06): o host real (FDD 32) e o falso (FDD 12) precisam recusar exatamente os mesmos registros, com o mesmo `Path` e a mesma `Rule`, e aplicar a mesma máquina de estado. Um registrador ou um `StateCell` criados por um plugin são vazios e separados dos do host; a FDD 24 pode recusar o uso por código de plugin (hipótese)
+  - **Por que no SDK** (confirmado, mesmo padrão do `telemetry.Registry` da FDD 06): o host real (FDD 32) e o falso (FDD 12) precisam recusar exatamente os mesmos registros, com o mesmo `Path` e a mesma `Rule`, e aplicar a mesma máquina de estado. Um registrador ou um `StateCell` criados por um plugin são vazios e separados dos do host; a FDD 24 pode recusar o uso por código de plugin (confirmado)
   - `Close` devolve um erro com `ErrRegistration` e `plugin.FieldErrors` (todos os problemas, na ordem das chamadas) ou `nil`. Depois do `Close`, qualquer chamada às visões faz panic com um valor `error` que embrulha `ErrRegistrationClosed`
   - `Services`, `Pages` e `CardEntries` devolvem cópias, para o host montar o servidor gRPC, o roteador do painel, o transporte em processo e a visão geral
   - `CheckPagePath` e `CheckCardID` (contrato 4) são as mesmas regras do `Registrar`, expostas para o kit e para testes
@@ -1191,7 +1207,7 @@ fmt.Println(errors.Is(err, ctrl.ErrRegistration), errors.As(err, &fe), fe[0].Pat
 
 **Exemplo de requisição**
 ```text
-SDK 1.2.0 acrescenta Routes.Action (FDD 11) e Query.Page (FDD 10).
+SDK 1.2.0 acrescenta Routes.Action (FDD 11) e Query.Table (FDD 10).
 Plugin A compilado contra 1.0.0 e plugin B que usa Routes.Action entram no mesmo controller.
 ```
 
@@ -1212,7 +1228,7 @@ Plugin A compilado contra 1.0.0 e plugin B que usa Routes.Action entram no mesmo
 
 | Condição | Tratamento | Observações |
 | --- | --- | --- |
-| Config fora do schema | `Check` devolve `plugin.ErrInvalidConfig` com a lista; o controller não sobe | Vale para obrigatório e opcional (hipótese); nenhum `New` roda |
+| Config fora do schema | `Check` devolve `plugin.ErrInvalidConfig` com a lista; o controller não sobe | Vale para obrigatório e opcional (confirmado); nenhum `New` roda |
 | `Validate` devolve erro | Mesmo tratamento, com `Rule` do autor ou `validate` | `Detail` saneado e cortado; nunca o valor |
 | Panic na `Validate` | O host contém e trata como erro de config (`validate_panic`) | O controller não sobe |
 | `New` com erro, panic ou `(nil, nil)` | Obrigatório: o controller não sobe; opcional: `falho` | `ErrNilInstance` no caso `(nil, nil)` |
@@ -1247,7 +1263,7 @@ Plugin A compilado contra 1.0.0 e plugin B que usa Routes.Action entram no mesmo
 - **Estruturais:** registro em tabelas com recusa antes do servidor real; recursos criados só no `New` e selados; `Caller` sobrescrito em toda entrada; mensagens serializadas entre plugins; `falho` terminal
 
 **Política de fallback**
-- Plugin opcional que falha na subida fica `falho`, sem serviços nem telas, e o controller segue (FR-011)
+- Plugin opcional com falha operacional na subida (`New` ou `Start` com erro, panic ou prazo estourado, ou panic numa capacidade de registro) fica `falho`, sem serviços nem telas, e o controller segue (FR-011); config inválida e registro recusado não se enquadram: impedem a subida, como no obrigatório
 - Plugin degradado continua servindo; o banner avisa e os dados são os últimos que ele tem em memória (FR-008)
 - Cartão que falha vira "indisponível" sem afetar os demais (ADR-018)
 - Violação de contrato (registro fora do namespace, capacidade privilegiada fora do core, config inválida) nunca tem fallback: a subida é recusada
@@ -1273,19 +1289,19 @@ Plugin A compilado contra 1.0.0 e plugin B que usa Routes.Action entram no mesmo
 | Métrica | Tipo | Rótulos | Fonte |
 | --- | --- | --- | --- |
 | `n3x_controller_plugin_state` | gauge 0/1 | `plugin`, `state` (`ok`, `degraded`, `failed`) | `StateCell.Load` no scrape (HLD do `n3x-controller`) |
-| `n3x_controller_plugin_state_changes_total` | counter | `plugin`, `state` (estado de destino) | observador do `StateCell` (nova, hipótese) |
-| `n3x_controller_plugin_panics_total` | counter | `plugin`, `kind` (`grpc`, `panel`, `plugin_api`, `background`, `lifecycle`) | recover do host (HLD; valores além de `grpc` e `panel` são hipótese) |
-| `n3x_controller_card_duration_seconds` | histogram (`telemetry.DefaultBuckets`) | `plugin`, `card` | renderização da visão geral (nova, hipótese) |
-| `n3x_controller_card_failures_total` | counter | `plugin`, `card`, `reason` (`timeout`, `error`, `panic`, `nil_widget`) | renderização da visão geral (nova, hipótese) |
-| `n3x_controller_plugin_api_calls_total` | counter | `plugin` (consumidor), `dependency` (provedor), `code` | transporte em processo (nova, hipótese) |
+| `n3x_controller_plugin_state_changes_total` | counter | `plugin`, `state` (estado de destino) | observador do `StateCell` (nova, confirmado) |
+| `n3x_controller_plugin_panics_total` | counter | `plugin`, `kind` (`grpc`, `panel`, `plugin_api`, `background`, `lifecycle`) | recover do host (HLD; valores além de `grpc` e `panel` são confirmados) |
+| `n3x_controller_card_duration_seconds` | histogram (`telemetry.DefaultBuckets`) | `plugin`, `card` | renderização da visão geral (nova, confirmado) |
+| `n3x_controller_card_failures_total` | counter | `plugin`, `card`, `reason` (`timeout`, `error`, `panic`, `nil_widget`) | renderização da visão geral (nova, confirmado) |
+| `n3x_controller_plugin_api_calls_total` | counter | `plugin` (consumidor), `dependency` (provedor), `code` | transporte em processo (nova, confirmado) |
 | `n3x_plugin_memory_bytes`, `n3x_plugin_memory_max_bytes`, `n3x_plugin_memory_evictions_total` | gauge, gauge e counter | `plugin` | `memory.Account.Stats` (FDD 04) |
 | `n3x_plugin_background_tasks`, `n3x_plugin_background_restarts_total` | gauge e counter | `plugin`; `plugin`, `instance`, `task` | tarefas de fundo (FDD 06) |
 | `n3x_plugin_dial_conns`, `n3x_plugin_dial_max_conns`, `n3x_plugin_dial_failures_total` | gauge, gauge e counter | `plugin`; o último também `reason` | `Dial` (FDD 06) |
 | `n3x_plugin_metric_series` | gauge | `plugin` | `telemetry.Account.Series` (FDD 06) |
 | `n3x_<namespace>_<nome>_*` | do autor | `plugin`, `instance` vazio, rótulos do autor | `env.Metrics()` (ADR-022) |
 
-- Páginas e gRPC já são medidos pelo host com `n3x_controller_panel_requests_total{route,status}`, `n3x_controller_panel_duration_seconds{route}`, `n3x_controller_grpc_calls_total{method,code}` e `n3x_controller_grpc_duration_seconds{method}` (HLD do `n3x-controller`); o rótulo `route` usa o padrão registrado, com `{nome}` (hipótese; o HLD mostra `:id`)
-- As famílias `n3x_plugin_*` do SDK valem também no controller, com os mesmos nomes da metade de proxy (hipótese); no controller o rótulo `instance` fica vazio
+- Páginas e gRPC já são medidos pelo host com `n3x_controller_panel_requests_total{route,status}`, `n3x_controller_panel_duration_seconds{route}`, `n3x_controller_grpc_calls_total{method,code}` e `n3x_controller_grpc_duration_seconds{method}` (HLD do `n3x-controller`); o rótulo `route` usa o padrão registrado, com `{nome}` (confirmado; o HLD mostra `:id`)
+- As famílias `n3x_plugin_*` do SDK valem também no controller, com os mesmos nomes da metade de proxy (confirmado); no controller o rótulo `instance` fica vazio
 - Cardinalidade por plugin, constante: 3 séries de estado, 5 tipos de panic, até 16 cartões vezes 4 motivos, dependências (até 32) vezes até 17 códigos. Nenhum rótulo com path real, valor de curinga, usuário, serviço do sidecar ou motivo do estado
 - O motivo do `degradado` nunca vira rótulo; vai para o banner e para o log
 
@@ -1297,7 +1313,7 @@ Plugin A compilado contra 1.0.0 e plugin B que usa Routes.Action entram no mesmo
 | `plugin_registration_refused` | error | `plugin_id`, `path`, `rule`, `detail` | um por problema |
 | `plugin_started` | info | `plugin_id`, `capabilities`, `state`, `duration_ms` | um por plugin |
 | `plugin_start_failed` | error | `plugin_id`, `required`, `reason` (`error`, `timeout`, `panic`, `registration_panic`), `duration_ms` | um por plugin |
-| `plugin_state_changed` | info (para `ok`), warn (para `degraded`), error (para `failed`) | `plugin_id`, `from`, `to`, `reason`, `suppressed` | no máximo 1 por segundo por plugin (hipótese) |
+| `plugin_state_changed` | info (para `ok`), warn (para `degraded`), error (para `failed`) | `plugin_id`, `from`, `to`, `reason`, `suppressed` | no máximo 1 por segundo por plugin (confirmado) |
 | `state_ignored` | warn | `plugin_id`, `call` (`degraded` ou `ok`) | uma vez por plugin |
 | `plugin_stopped` | info | `plugin_id`, `duration_ms` | um por plugin |
 | `plugin_stop_failed` | warn | `plugin_id`, `reason` (`error`, `timeout`, `panic`) | um por plugin |
@@ -1319,7 +1335,7 @@ Plugin A compilado contra 1.0.0 e plugin B que usa Routes.Action entram no mesmo
 - Painel de referência (FDD 47): estado por plugin, transições, panics por tipo, latência e falhas dos cartões, chamadas entre plugins por código
 - Alertas sugeridos:
   - `n3x_controller_plugin_state{state!="ok"} == 1` por 5 minutos (HLD do `n3x-controller`)
-  - oscilação: `increase(n3x_controller_plugin_state_changes_total[15m]) > 6` (hipótese)
+  - oscilação: `increase(n3x_controller_plugin_state_changes_total[15m]) > 6` (confirmado)
   - `rate(n3x_controller_plugin_panics_total[5m]) > 0` (HLD do `n3x-controller`)
   - cartão instável: `rate(n3x_controller_card_failures_total[5m]) > 0` por 15 minutos
   - dependência com problema: `rate(n3x_controller_plugin_api_calls_total{code=~"Unavailable|DeadlineExceeded|Internal"}[5m]) > 0` por 10 minutos
@@ -1370,11 +1386,11 @@ Plugin A compilado contra 1.0.0 e plugin B que usa Routes.Action entram no mesmo
 - **API entre plugins** (no kit e no host): `Dependency` para ID fora de `depends_on` e para o próprio ID dá `ErrNotDependency`; dependência sem `PluginAPI` dá `ErrNoPluginAPI`; dependência `falho` dá `ErrDependencyFailed`; método da tabela `sidecar` pela conexão dá `Unimplemented`; o provedor vê `Caller` `{plugin, <consumidor>}` mesmo quando o consumidor pôs outra identidade no `ctx`; alterar a mensagem recebida no provedor não muda a do consumidor (cópia); provedor que nunca responde estoura em `runtime.plugin_call_timeout` mais 50 ms; panic no provedor dá `Internal` ao consumidor e o processo segue
 - **Prazos** (vetores de conformidade do kit, rodados no host): `Start` com `ctx` de 30 s; página com 10 s; cartão com 1 s; `Stop` com 5 s; tolerância de 50 ms; `Start` que ignora o `ctx` não segura a subida além do prazo mais 100 ms
 - **Ordem** (vetores de conformidade): com o core e 3 plugins (`a` sem dependência, `b` dependendo de `a`, `c` dependendo de `b`), o registro de chamadas é `CheckHost` do core e `Check` dos demais, depois, para o core, `New`, `CheckPrivileged`, `Start`, `GRPC`, `PublicGRPC`, `Routes`, `Cards`, e em seguida `New`, `CheckPrivileged`, `Start`, `GRPC`, `PluginAPI`, `Routes`, `Cards` de `a`, de `b` e de `c`; no desligamento, `Stop` de `c`, `b`, `a` e do core; `Check` nunca chama `ValidateHost`; com `b` opcional e `Start` falhando, `b` fica `falho`, não recebe `Stop` e `c` recebe `ErrDependencyFailed` no `Dependency`
-- **Política de subida** (vetores): opcional com `Validate` falhando impede a subida; opcional com rota fora do prefixo impede a subida; opcional com `Start` falhando sobe `falho`; obrigatório com `Start` falhando encerra com código diferente de zero (código da FDD 30) e chama `Stop` dos que já tinham subido
+- **Política de subida** (vetores): opcional com `Validate` falhando impede a subida; opcional com schema inválido impede a subida; opcional com rota fora do prefixo (registro recusado) impede a subida; opcional com `Start` falhando sobe `falho`; opcional com `New` falhando ou com panic em `Routes` sobe `falho`; obrigatório com `Start` falhando encerra com código diferente de zero (código da FDD 30) e chama `Stop` dos que já tinham subido
 - **Critério do PRD:** plugin de teste com uma página no menu e um cartão aparece no host falso e no painel real sem mudar repositórios do core (FDDs 12, 13 e 35)
 - **Dependências:** `go list -deps ./controller` não lista `proxy/`, Echo, o SDK Go do Envoy nem pacotes do `n3x-controller` ou do `n3x-sidecar`; `go list -deps ./controller/ui` só lista biblioteca padrão nesta FDD (a FDD 10 acrescenta o que o renderizador precisar); `go vet` e `go test -race ./controller/...` passam
 - **Superfície:** golden de `go doc -all ./controller` e `./controller/ui` igual ao versionado
-- **Cobertura:** no mínimo 90% de linhas em `controller/` e nos tipos de `controller/ui` desta FDD (hipótese, igual às FDDs anteriores)
+- **Cobertura:** no mínimo 90% de linhas em `controller/` e nos tipos de `controller/ui` desta FDD (confirmado, igual às FDDs anteriores)
 
 ---
 
@@ -1460,7 +1476,8 @@ Plugin A compilado contra 1.0.0 e plugin B que usa Routes.Action entram no mesmo
 - **Impacto:** linters e ferramentas reclamam; autores importam com alias diferente em cada plugin
 - **Mitigação:**
     - Documentação e gerador `n3x-new` (FDD 14) sempre com `ctrl.X`; exceção registrada nas regras de lint do SDK
-- **Plano de contingência:** manter o pacote `controller` com alias `ctrl` documentado, decidido na revisão desta FDD (antes da `v0.1.0`)
+- **Decisão registrada:** o diretório `controller/` usa `package ctrl`, sem alias (confirmado na clarificação); a exceção à regra de nome de pacote fica nas regras de lint do SDK
+- **Plano de contingência:** patch das regras de lint e do gerador `n3x-new` se alguma ferramenta recusar o nome
 
 ### Cartões pesados no polling de 5 s
 

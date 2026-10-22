@@ -1,8 +1,9 @@
 ### HLD: N3X Plataforma (visão de sistema e contratos transversais)
 
-Versão: 1.1
-Data: 2026-10-20
+Versão: 1.2
+Data: 2026-10-22
 Responsável: Guilherme Giusti
+Atualização 1.2 (2026-10-22): alinhado às decisões da clarificação das FDDs SDK-01 a SDK-16.
 
 ---
 
@@ -16,13 +17,13 @@ Problemas técnicos endereçados
 - Falta de uma visão única de como os cinco repositórios se compõem em runtime e em build
 - Metas não funcionais do PRD sem um dono no nível do sistema
 
-Base: `docs/prd/PRD-N3X.md` versão 1.5, de 2026-10-20. Requisitos cobertos: requisitos não funcionais do sistema; FR-002, FR-005, FR-011 e FR-016 na autenticação de ponta a ponta.
+Base: `docs/prd/PRD-N3X.md` versão 1.6, de 2026-10-22. Requisitos cobertos: requisitos não funcionais do sistema; FR-002, FR-005, FR-011 e FR-016 na autenticação de ponta a ponta.
 
 Dependências com outros sistemas
 - Repositórios N3X: `n3x-sidecar`, `n3x-controller`, `n3x-sdk`, `n3x-builder` e `n3x-plugin-core`
 - Aplicação do cliente, em qualquer linguagem, que recebe tráfego só pelo sidecar
 - Orquestradores: Kubernetes (1.29 ou superior), ECS e docker compose
-- Istio 1.31, apenas como compatibilidade
+- Istio 1.31, como requisito de compatibilidade que bloqueia a v1.0.0 (conteúdo e CI com kind + Istio); se o alvo `istio-1.31` for adiado, é decisão registrada no PRD
 - Imagens base `envoyproxy/envoy:v1.40.x` e `istio/proxyv2:1.31.x`, fixadas por digest
 - Registro de containers do operador, Go module proxy e GitHub (build)
 - Bancos dos plugins que guardam dados; o controller não tem armazenamento próprio, e o plugin core da v1 guarda tudo em memória (ADR-001 do `n3x-plugin-core`)
@@ -50,22 +51,26 @@ Camadas de responsabilidade: aplicação → sidecar (Envoy + core do `.so` + pl
 | Teste | Repositórios | Alvos | Arquiteturas | Quando |
 | --- | --- | --- | --- | --- |
 | Unitários com `-race`, fuzzing, benchmarks com 0 alocações | Todos | n/a | amd64 | Todo PR |
-| Conformidade do SDK (seguir, parar, retomar, negar, panic) | sdk, sidecar | `envoy-1.40`, `istio-1.31` | amd64, arm64 | Todo PR |
+| Conformidade do SDK (seguir, parar, retomar, negar, panic), com o adaptador falso do executor (pacote `chain/` compartilhado) | sdk, sidecar | n/a (adaptador falso) | amd64 | Todo PR |
+| Conformidade do SDK (seguir, parar, retomar, negar, panic), contra proxies reais | sdk, sidecar | `envoy-1.40`, `istio-1.31` | amd64, arm64 | Noturno e pré-release (bloqueia a v1.0.0) |
 | Build e carga do `.so` (cenários de falha do `n3x-plugin build`) | builder | `envoy-1.40`, `istio-1.31` | amd64, arm64 | Todo PR |
 | Integração ponta a ponta (core + plugin de exemplo + controller, HTTP/1.1, HTTP/2, gRPC) | Todos | `envoy-1.40`, `istio-1.31` | amd64 no PR, arm64 à noite | PR e noturno |
 | Compatibilidade de protos (`buf breaking`) | plugin-core e plugins | n/a | n/a | Todo PR |
 | Segurança (`govulncheck`, `gosec`, busca de segredos em logs, erros e config) | Todos | n/a | amd64 | Todo PR |
 | Ambientes: docker compose, kind, kind + Istio | sdk (deploy) | ambos | amd64 | Compose no PR, kind à noite |
 | Carga open-loop (1.000 rps) e 500 sidecars simulados | sidecar, controller | `envoy-1.40` | amd64 | Noturno, máquina dedicada |
-| Longa duração (vazamento de goroutines) | sidecar | `envoy-1.40` | amd64 | Noturno e pré-release |
-| Próxima versão candidata do Envoy e cada patch do Istio | sidecar, builder | candidatos | amd64 | Agendado |
+| Longa duração (vazamento de goroutines; core dump de erro fatal via `GOTRACEBACK=crash`, ativável nas imagens de teste) | sidecar | `envoy-1.40` | amd64 | Noturno e pré-release |
+| Patch do Envoy ou do Istio: imagens candidatas `-rc` publicadas | sidecar, builder | `-rc` publicadas | amd64 | Dispara com a publicação da `-rc` (pré-release) |
 | ECS | sdk (deploy) | `envoy-1.40` | amd64 | Manual guiado, pré-release |
+
+O gate de release exige os roteiros manuais (`MAN-01` a `MAN-03`) quando a mudança toca `deploy/`, `docs/operador/` ou `docs/autor/`. As provas de carga de "cerca de 200 serviços sem `hmac_key`" são da carga simulada.
 
 Ambiente de implantação
 - Agnóstico: cloud ou on-premises, onde houver containers, sem recurso exclusivo de orquestrador
-- **docker compose:** controller como serviço próprio; aplicação com `network_mode: "service:<sidecar>"`, escutando em `127.0.0.1`; `n3x.yaml`, chave AES e CA montados por volume
-- **Kubernetes (1.29 ou superior):** sidecar nativo (`initContainers` com `restartPolicy: Always`), que sobe antes e desce depois da aplicação (ADR-007); probes no health `17021`; `n3x.yaml` por ConfigMap e chave por Secret montado como arquivo
-- **ECS:** sidecar e aplicação na mesma task (`awsvpc`); aplicação com `dependsOn` do sidecar; health check do container no `17021`; chave por arquivo montado (hipótese: volume populado por secret)
+- **docker compose:** controller como serviço próprio; aplicação com `network_mode: "service:<sidecar>"`, escutando em `127.0.0.1`; `n3x.yaml`, chave AES e CA montados por volume; a chave AES e o `tls.key` são entregues por volume nomeado preenchido por um serviço inicial `n3x-files` (root, dono 17000:17000, modo 0440), com `service_completed_successfully`
+- **Kubernetes (1.29 ou superior):** sidecar nativo (`initContainers` com `restartPolicy: Always`), que sobe antes e desce depois da aplicação (ADR-007); probes no health `17021`; `n3x.yaml` por ConfigMap e chave por Secret montado como arquivo; no kind, a chave AES e o `tls.key` seguem o volume preenchido por `n3x-files`; `runAsUser` do sidecar só no contêiner `n3x`
+- **Endereço do controller:** fixo em todas as topologias, `n3x-controller.n3x.svc.cluster.local:17443`, para que o `n3x.yaml` seja o mesmo byte a byte; no ECS exige um namespace Cloud Map com esse nome
+- **ECS:** sidecar e aplicação na mesma task (`awsvpc`); aplicação com `dependsOn` do sidecar; health check do contêiner por `n3x probe live` (não HTTP em `17021`); chave por arquivo montado e fechada: um contêiner `n3x-files` (não essencial) busca a chave no Secrets Manager e a grava num volume. O papel de task é compartilhado por todos os contêineres, então a aplicação tem o mesmo acesso à chave: risco residual aceito e documentado, com endurecimento opcional por EFS
 - **Istio:** o Istio manda. A imagem `proxyv2` injetada é trocada pela imagem N3X baseada nela, com o `.so` dentro; o tráfego entra pelos listeners e portas do Istio e um `EnvoyFilter` estático insere o filtro do N3X; o `n3x.yaml` é montado no pod (ADR-006)
 - Regra comum: a aplicação nunca fica exposta; fora do Istio, ela escuta só em `127.0.0.1`
 - Exemplos de referência de cada topologia ficam em `n3x-sdk/deploy/` (ADR-008)
@@ -161,7 +166,7 @@ Fonte de verdade
 | Entrada do sidecar (`17000`) | API | HTTP/1.1, HTTP/2, gRPC | Externa | Latência adicionada p50 ≤ 0,5 ms e p99 ≤ 2 ms a 1.000 rps |
 | Health do sidecar (`17021`) | API | HTTP | Interna (orquestrador) | Pronto em até 5 s após o container subir |
 | Métricas do sidecar (`17090`) | API | HTTP (Prometheus) | Interna | n/a |
-| Admin do Envoy (`127.0.0.1:17001`) | API | HTTP | Só localhost | n/a |
+| Admin do Envoy (socket interno `/tmp/n3x/admin.sock`) | API | HTTP em socket | Somente interna; as portas de loopback `17001` e `17090` são reservadas e negadas ao `env.Dial` dos plugins | n/a |
 | Login (`n3x.plugins.n3x.core.v1.Login`, porta `17443`) | API | gRPC, TLS 1.3 | Interna, única rota sem sessão | Limite de tentativas por IP e por serviço |
 | Servidor gRPC do controller (`n3x.plugins.<namespace>.<nome>.v1`, `17443`) | API | gRPC, TLS 1.3 | Interna | 500 sidecars em 1 vCPU e 512 MB |
 | Painel do controller (`17444`) | API | HTTPS | Interna | p95 < 300 ms |
@@ -198,7 +203,7 @@ Meta de disponibilidade
 ### Segurança
 Autenticação
 - Sidecar: credencial por serviço `{service, secret}`. No `n3x.yaml` do sidecar o segredo fica como `ENC[...]` (AES-256-GCM, chave em arquivo montado, nunca em variável de ambiente); no `n3x.yaml` do controller fica só o hash bcrypt com custo ≥ 12 (ADR-003)
-- Login em `n3x.plugins.n3x.core.v1.Login`, única rota sem sessão; o host do controller confere o segredo, com 5 falhas por IP e por serviço bloqueando por 15 min, até 2 bcrypt simultâneos e cache de 1 h por serviço (ADR-004 do `n3x-controller`)
+- Login no serviço próprio `n3x.plugins.n3x.core.v1.Login` (porta `17443`), única rota sem sessão; o IP do chamador vem do par TCP, ou de `x-forwarded-for` (da direita para a esquerda) apenas quando o par está listado em `grpc.trusted_proxies` (`n3x.yaml` do controller, lista de CIDRs, vazia por padrão); o host do controller confere o segredo, com 5 falhas por IP e por serviço bloqueando por 15 min, até 2 bcrypt simultâneos e cache de 1 h por serviço (ADR-004 do `n3x-controller`)
 - Sessão: token assinado com HMAC-SHA256, ligado a serviço e instância, com TTL de 1 h e renovação em 80% do prazo (ADR-005 do `n3x-plugin-core`). O controller não guarda tokens; valida assinatura e validade
 - Chave HMAC: do plugin core, em `session.hmac_key` na seção dele quando configurada; sem ela, gerada aleatoriamente no `Start` e mantida só em memória (ADR-004 do `n3x-plugin-core`)
 - Painel: root vindo do `n3x.yaml` com hash bcrypt e usuários de leitura com hash bcrypt declarados na seção do core no `n3x.yaml`, sem gestão pelo painel na v1 (FR-009, ADR-003 do `n3x-plugin-core`); sessão do painel só em memória no controller (ADR-006 do `n3x-controller`)
@@ -212,7 +217,7 @@ Autorização
 
 Proteção de dados
 - Nenhum segredo ou token em log, mensagem de erro ou config enviada ao controller; campos de segredo mascarados pelo schema do plugin
-- Admin do Envoy só em localhost e aplicação nunca exposta
+- Admin do Envoy só em socket interno (`/tmp/n3x/admin.sock`) e aplicação nunca exposta
 - LGPD: na v1 não há trilha de auditoria; login, logout e bloqueio do painel ficam só no log JSON operacional do controller, com a retenção do coletor de logs. A trilha formal, com IP e usuário tratados como dados pessoais e retenção aplicada pelo core, fica para a v2 (ADR-002 do `n3x-plugin-core`)
 - Análise estática no build proíbe cgo, `unsafe` e `reflect` sobre tipos do SDK; `govulncheck` em todo build; imagens base fixadas por digest
 
@@ -220,7 +225,9 @@ Gestão de segredos
 - Formato único `ENC[...]` (AES-256-GCM) para segredos que precisam ser lidos: credencial no sidecar, chave HMAC do core e senhas de banco dos plugins no `n3x.yaml` do controller
 - bcrypt para tudo que só é conferido: root, usuários de leitura e credenciais de serviço
 - Chave AES sempre em arquivo montado pelo orquestrador; a chave HMAC, quando configurada, vai cifrada na seção do core
-- Ferramentas: `n3x keygen` e `n3x encrypt` no sidecar (ADR-003 do `n3x-sidecar`); `hash`, `credential new`, `encrypt` e `keygen` no controller (ADR-009 do `n3x-controller`)
+- O entrypoint confere os envelopes `ENC[...]` e o `.so`/host decifra; o escopo (AAD) é por serviço no sidecar e por plugin no controller
+- Ferramentas: `n3x keygen` e `n3x encrypt` no sidecar (ADR-003 do `n3x-sidecar`); `hash`, `credential new`, `encrypt` e `keygen` no controller (ADR-009 do `n3x-controller`); as ferramentas `encrypt` exigem `--service` (sidecar) ou `--plugin` (controller)
+- Controller: plugin (obrigatório ou opcional) com config inválida ou registro recusado impede a subida; só falha operacional de `New`/`Start` e panic deixam o opcional `falho`; o core se declara `degradado` e o host marca `falho` por panic repetido na autenticação
 - Rotação da credencial: um único hash por serviço (ADR-005 do `n3x-controller`); troca do hash, restart do controller e redeploy do serviço; durante a troca os sidecars do serviço somem do painel, sem afetar o tráfego
 
 ---
@@ -233,6 +240,8 @@ Logs
 
 Métricas
 - Prefixo `n3x_`, expostas em Prometheus
+- Famílias de plataforma reservadas: `n3x_plugin_*`, `n3x_controller_*`, `n3x_sidecar_*`, `n3x_build_*` e `n3x_config_*`; plugins de terceiros não podem usar os namespaces `plugin`, `controller`, `sidecar`, `build`, `config` e `n3x`
+- Histogramas no sidecar sem `_sum`
 - Sidecar: estado da conexão com o controller, idade da sessão, logins e renovações por resultado, `panics_total` por plugin, plugins desligados automaticamente, tamanho e descartes do buffer, uso de memória por plugin em relação à cota
 - Controller (prefixo `n3x_controller_`, detalhe no HLD do `n3x-controller`): chamadas gRPC por método e status, logins por resultado e serviço, logins bloqueados, sessões ativas e estado de cada plugin (`ok`, `degradado`, `falho`)
 - Plugin core (prefixo `n3x_n3x_core_`, regra do ADR-022 do `n3x-sdk`, detalhe no ADR-010 do `n3x-plugin-core`): sidecars por estado, divergências, conflitos de identidade, registros, logins, eventos, memória usada e estado degradado
@@ -256,7 +265,7 @@ Dashboards e alertas
 - **Mitigação:**
   - Só amd64 e testes rápidos no PR; arm64, carga e longa duração à noite
   - CI cruzada centralizada em `n3x-sdk/deploy/`
-- **Plano de contingência:** adiar o alvo `istio-1.31` e entregar primeiro `envoy-1.40`
+- **Plano de contingência:** adiar o alvo `istio-1.31` e entregar primeiro `envoy-1.40` (como o Istio bloqueia a v1.0.0, o adiamento é decisão registrada no PRD)
 
 #### Plugin core concentra autenticação, interceptor e registro
 - **Probabilidade:** média
@@ -316,6 +325,22 @@ Dashboards e alertas
   - `buf breaking`, checagem de SDK no build e alerta de manifesto no painel
 - **Plano de contingência:** refazer o build com a mesma lista e versões nos dois lados
 
+#### ECS: papel de task compartilhado dá à aplicação o mesmo acesso à chave
+- **Probabilidade:** a avaliar
+- **Impacto:** a avaliar (a aplicação pode ler a chave AES no Secrets Manager)
+- **Mitigação:**
+  - IAM de menor privilégio (só os ARNs necessários) e `n3x-files` não essencial
+  - Endurecimento opcional por EFS, sem permissão da task no Secrets Manager
+- **Plano de contingência:** risco residual aceito e documentado no guia do operador
+
+#### Conformidade real só noturna e no pré-release
+- **Probabilidade:** a avaliar
+- **Impacto:** a avaliar (regressão contra proxy real detectada só à noite ou no pré-release)
+- **Mitigação:**
+  - Todo PR roda a conformidade com o adaptador falso do executor
+  - Gate de pré-release bloqueia a v1.0.0
+- **Plano de contingência:** n/a (pendência: confirmar com a FDD SDK-16)
+
 Riscos com dono, só referenciados: erro fatal do Go no `.so`, iteração de filtros, negação gRPC e overhead (HLD do `n3x-sidecar`); quebra do Istio e do SDK Go do Envoy (HLD do `n3x-builder`).
 
 ---
@@ -327,9 +352,9 @@ ADRs associados
 - [ADR-003: Login por credencial de serviço e sessão HMAC sem estado](adr/ADR-003-login-credencial-e-sessao-hmac.md) (atualizado em 2026-10-20: TTL e chave HMAC no `n3x-plugin-core`)
 - [ADR-004: Capacidades privilegiadas do plugin core](adr/ADR-004-capacidades-privilegiadas-plugin-core.md)
 - [ADR-005: Memória isolada por plugin no SDK](adr/ADR-005-memoria-isolada-por-plugin.md)
-- [ADR-006: Faixa de portas 17xxx e Istio no comando](adr/ADR-006-portas-17xxx-e-modo-istio.md)
-- [ADR-007: Sidecar nativo no Kubernetes](adr/ADR-007-sidecar-nativo-kubernetes.md)
-- [ADR-008: Exemplos de deploy e CI cruzada em `n3x-sdk/deploy/`](adr/ADR-008-exemplos-deploy-no-sdk.md)
+- [ADR-006: Faixa de portas 17xxx e Istio no comando](adr/ADR-006-portas-17xxx-e-modo-istio.md) (atualizado em 2026-10-22)
+- [ADR-007: Sidecar nativo no Kubernetes](adr/ADR-007-sidecar-nativo-kubernetes.md) (atualizado em 2026-10-22)
+- [ADR-008: Exemplos de deploy e CI cruzada em `n3x-sdk/deploy/`](adr/ADR-008-exemplos-deploy-no-sdk.md) (atualizado em 2026-10-22)
 - [ADR-009: Sem tracing distribuído na v1](adr/ADR-009-sem-tracing-v1.md)
 - [ADR-010: Metas não funcionais no nível do sistema](adr/ADR-010-metas-nao-funcionais-nivel-sistema.md)
 

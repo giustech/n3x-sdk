@@ -42,11 +42,11 @@ Esta entrevista achou quatro problemas novos:
 
 **Suposições**
 - Go 1.26 ou superior (ADR-021)
-- htmx 2.0.x embutido e servido pelo host, com `includeIndicatorStyles`, `allowEval` e `allowScriptTags` desligados (hipótese de versão; a configuração é da FDD 35, L-38)
+- htmx 2.0.x embutido e servido pelo host, com `includeIndicatorStyles`, `allowEval` e `allowScriptTags` desligados (confirmado; a configuração é da FDD 35, L-38)
 - O host aplica sessão, papel e prazo antes de chamar a `PageFunc` e chama o renderizador com o mesmo `ctx` (FDD 08)
 - A árvore é gerada a cada requisição e nunca guardada (HLD do `n3x-sdk`, "Modelo de dados")
-- O orçamento do renderizador dentro do p95 de 300 ms do painel é de até 5 ms por página típica (hipótese)
-- Navegadores alvo: as duas últimas versões estáveis de Chrome, Edge, Firefox e Safari (hipótese)
+- O orçamento do renderizador dentro do p95 de 300 ms do painel é de até 5 ms por página típica (confirmado)
+- Navegadores alvo: as duas últimas versões estáveis de Chrome, Edge, Firefox e Safari (confirmado)
 
 **Restrições**
 - Nenhum widget aceita HTML, nome de tag, nome de atributo, classe ou estilo vindos do plugin (ADR-018)
@@ -64,13 +64,30 @@ Esta entrevista achou quatro problemas novos:
 - HLDs: `n3x-sdk/docs/HLD.md` (linha `controller/ui`, catálogo, interfaces públicas, escalabilidade, segurança, decisões pendentes); `n3x-controller/docs/HLD.md` (fluxo de requisição do painel, mapa de telas, CSP); `n3x-plugin-core/docs/HLD.md` (telas de sidecars, configs, fluxo e usuários)
 - FDDs aplicadas: 01 (`plugin.ID`, `FieldError`, `FieldErrors`, notação de caminho da L-34), 02 (`Schema.Walk`, `Node`), 08 (`ui.Widget`, `ui.Query`, `PageFunc`, `CardFunc`, mapeamento de erro de página, `CheckCardID`)
 - Lacunas do README:
-  - **L-22 fechada aqui:** o renderizador gera HTML direto, sem templ, por um escritor interno sobre buffer reaproveitado, só com a biblioteca padrão e `plugin/`. O tema visual é do SDK: uma folha de estilo embutida (`ui.Stylesheet`) com tokens de cor claro e escuro e as classes dos widgets e do esqueleto do host. O host (FDD 35) serve essa folha e usa as mesmas classes no layout templ (hipótese; contratos 6 a 8)
-  - **L-67 fechada aqui:** o catálogo da v1 ganha o widget `ui.Pipeline`, uma sequência ordenada de etapas (`ui.Stage`), usada pela tela de fluxo por serviço da FDD 45 para desenhar a cadeia em ordem de fase (hipótese; contrato 3)
+  - **L-22 fechada aqui:** o renderizador gera HTML direto, sem templ, por um escritor interno sobre buffer reaproveitado, só com a biblioteca padrão e `plugin/`. O tema visual é do SDK: uma folha de estilo embutida (`ui.Stylesheet`) com tokens de cor claro e escuro e as classes dos widgets e do esqueleto do host. O host (FDD 35) serve essa folha e usa as mesmas classes no layout templ (confirmado; contratos 6 a 8)
+  - **L-67 fechada aqui:** o catálogo da v1 ganha o widget `ui.Pipeline`, uma sequência ordenada de etapas (`ui.Stage`), usada pela tela de fluxo por serviço da FDD 45 para desenhar a cadeia em ordem de fase (confirmado; contrato 3)
   - **L-56 completada:** os tipos mínimos da FDD 08 ficam como estão; aqui entram o catálogo, `Query.Table`, `Query.Tab` e as chaves reservadas da query (contratos 1 a 5)
   - **L-38 (FDD 35) recebe uma restrição:** o HTML do renderizador não depende dos estilos de indicador do htmx, então a FDD 35 pode desligá-los
 - Pedidos de FDDs anteriores atendidos:
   - FDD 08 (P-02 e I-03 dela): `ui.Widget` continua selada e `ui.Query` continua opaca; a `Query` ganha paginação, ordenação, filtros e aba por métodos novos; a coluna de tabela passa a ser `ui.TableColumn`, e `ui.Column` fica só como layout
   - FDD 02 (pedido às FDDs 44 e 45): o SDK oferece `ui.ConfigDetail`, que usa `Schema.Walk` e `Node` para mostrar a config com nome e descrição
+
+**Decisões aprovadas na clarificação**
+- `ui.ConfigDetail` confia na entrada: a config chega já normalizada e mascarada (`***...`, formato da FDD 37, no core) e o renderizador não mascara por conta própria; a garantia de mascarar é de quem chama (core ou plugin), sem defesa em profundidade
+- Excesso estrutural vindo de dados (listas de filhos, itens de `Detail` e `Stage`, etapas e widgets acima de `MaxChildren`, `MaxStages` e `MaxWidgets`) é truncado com um item final "mais N itens não exibidos" e o novo aviso `list_truncated`; erro estrutural fica só para profundidade, contexto e campos obrigatórios (código do plugin)
+- Depois da troca de fragmento, cada link ou controle de paginação, ordenação e filtro da tabela tem `id` estável (`n3x-p-<id>-sort-<coluna>`, `-prev`, `-next`, `-filter`) para o htmx devolver o foco ao elemento de mesmo `id` (WCAG 2.4.3), e o resumo "Página X de Y" tem `role="status"` com `aria-live="polite"` (WCAG 4.1.3), sem JavaScript do plugin; os novos IDs ficam congelados na major
+- O horário exibido (`FormatTime`, `TimeCell`) é sempre em UTC, com o sufixo "UTC" e `<time datetime>` em RFC 3339, sem fuso configurável e sem campo novo em `Request`
+- O catálogo da v1 ganha `Pipeline` (com `Stage`) e `Code` amplia para texto, YAML, JSON e diff; `ui.Column` fica só como layout (a coluna da tabela é `ui.TableColumn`); `Stat.Value` é `string`. O HLD (exemplo de `Routes`, `Stat` e `Table`) e a ADR-018 (catálogo, "templ só no host", `Cards.Add(id, papel, fn CardFunc)`) devem ser atualizados no Workflow 3
+- As demais hipóteses numéricas, de teste e de baixo risco ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Definir os IDs da `Table`, do `<caption>` e das partes no modo cartão (o prefixo do cartão vale para tudo); esclarecer o cálculo de `N` em `_s<N>` com abas inativas e o texto de "estabilidade" do ID; dizer o que "Anterior" e "Próxima" fazem nas bordas (o foco some quando o controle não existe mais na página nova) e de onde vêm as opções do filtro automático; decidir se "Limpar filtros" também ganha `id`
+- Esclarecer a preservação de chaves da query com `.` desconhecidas ou multivaloradas nos links e campos ocultos, e o aviso `query_ignored`
+- Duplicar em `ui` a regra de `CheckCardID` (sem importar `ctrl`), com teste de sincronia; definir `Check` com `ModeFragment` e com valor zero; deixar claro que o renderizador só entrega o conteúdo e que layout e modo são da FDD 35
+- Revisar esta FDD após a clarificação da FDD 11 (campos reservados `Request.CSRFToken`, `Request.Root`, `Request.RefreshInterval`, `Table.Export`, chave `<id>.export`)
+- Corrigir na FDD 08 a nota de versão que cita `Query.Page` (o método existente é `Query.Table`)
+- Divergências para o Workflow 3: HLD (exemplo de `Routes`, `Columns: []ui.Column`, `Stat.Value`), ADR-018 (templ só no host; widget novo só em minor; `Pipeline`; `Code`), pacote novo `controller/ui/uitest` e embute da folha de estilo no HLD e na ADR-011
+- Dependem de outros repositórios: FDD 35 (modo, `HX-Retarget` e `HX-Reswap`, folha com hash, configuração do htmx, axe na galeria), FDD 34 (CSRF), FDDs 37, 44 e 45 (core), FDD 12 (kit), FDDs 13, 47 e 51
 
 ---
 
@@ -78,11 +95,11 @@ Esta entrevista achou quatro problemas novos:
 
 - **Nenhum texto do plugin vira marcação.** Invariante: todo texto passa pelo único escritor de HTML do pacote, que escapa `&`, `<`, `>`, `"` e `'`; nenhum campo de widget aceita tag, atributo, classe ou estilo. Medida: fuzzing de cada campo de texto por 5 minutos por alvo na CI noturna, sem achado; teste de propriedade "a estrutura do HTML não muda com o conteúdo do texto".
 - **HTML compatível com a CSP por construção.** Medida: 0 `<script>`, 0 atributo `style`, 0 atributo `on*`, 0 URL com esquema ou `//` em todos os arquivos golden e na galeria (`uitest.Lint`).
-- **Acessível no nível WCAG 2.1 AA.** Medida: 0 violações do axe (`wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`) nas páginas da galeria, na CI do controller (FDD 35); 0 problemas no `uitest.Lint`; pares de cor do tema com contraste mínimo de 4,5:1 para texto e 3:1 para bordas de controle e foco, no tema claro e no escuro.
-- **Rápido e previsível.** Medida: tabela de 500 linhas por 8 colunas numa página só em até 5 ms por operação; 500 linhas entregues com página de 50, ordenadas e filtradas, em até 1 ms; até 100 alocações por renderização de tabela; buffer de saída reaproveitado (hipóteses de 1 ms e de alocações).
+- **Acessível no nível WCAG 2.1 AA.** Medida: 0 violações do axe (`wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`) nas páginas da galeria, na CI do controller (FDD 35); 0 problemas no `uitest.Lint`, inclusive a regra `focus_id` (controles de paginação, ordenação e filtro com ID estável, para o foco voltar ao mesmo controle depois da troca de fragmento, WCAG 2.4.3, e resumo de página em região `status`, WCAG 4.1.3; confirmado); pares de cor do tema com contraste mínimo de 4,5:1 para texto e 3:1 para bordas de controle e foco, no tema claro e no escuro.
+- **Rápido e previsível.** Medida: tabela de 500 linhas por 8 colunas numa página só em até 5 ms por operação; 500 linhas entregues com página de 50, ordenadas e filtradas, em até 1 ms; até 100 alocações por renderização de tabela; buffer de saída reaproveitado (confirmado).
 - **Determinístico.** Invariante: a mesma árvore com o mesmo pedido gera os mesmos bytes; o fragmento de um bloco é byte a byte igual ao trecho desse bloco na página inteira; renderizar não altera a árvore.
 - **Erros completos, sem vazar dados.** Medida: a validação estrutural devolve todos os problemas numa passada, em ordem determinística, com `Path` e `Rule` estáveis na major; o `Detail` nunca cita texto vindo do plugin.
-- **Dado ruim não derruba a tela.** Invariante: texto longo, UTF-8 inválido, código grande, linhas demais e query inválida viram saneamento com aviso (`Notice`), nunca erro; só a estrutura inválida (código do plugin) falha a renderização.
+- **Dado ruim não derruba a tela.** Invariante: texto longo, UTF-8 inválido, código grande, linhas demais, listas de filhos, itens e etapas acima dos limites e query inválida viram saneamento com aviso (`Notice`), nunca erro; listas acima de `MaxChildren` e árvores acima de `MaxWidgets` são truncadas com um item final "mais N itens não exibidos" e o aviso `list_truncated` (confirmado). Só a estrutura inválida (profundidade, contexto e campos obrigatórios, que são código do plugin) falha a renderização.
 - **Um tema só.** Invariante: as telas do host e as de plugin usam a mesma folha de estilo, entregue pelo SDK; nenhuma tela de plugin tem visual próprio.
 - **Catálogo cresce por adição.** Invariante: `Widget` selada, structs em que o valor zero de todo campo opcional é o comportamento padrão, `Cell` e `TableState` opacos; widget, campo, célula e método novos entram em minor.
 
@@ -108,7 +125,7 @@ Esta entrevista achou quatro problemas novos:
 - Layout do painel, menu, login, banners de estado, `<head>`, cabeçalhos HTTP, entrega dos assets e execução do axe: FDD 35 (CTL-06)
 - Renderização no host falso de testes: FDD 12 (SDK-12)
 - Telas concretas do core e o cálculo do diff de config: FDDs 44 (CORE-08) e 45 (CORE-09)
-- Fora da v1, por adição em minor se houver caso real (hipótese): paginação feita pelo próprio plugin com total informado, realce de sintaxe no `Code`, tema escolhido pelo usuário, textos em outros idiomas, ordenação com colação de acentos do pt-BR, filtro de seleção múltipla, destaque de linha por tom, cálculo de diff pelo SDK
+- Fora da v1, por adição em minor se houver caso real (confirmado): paginação feita pelo próprio plugin com total informado, realce de sintaxe no `Code`, tema escolhido pelo usuário, textos em outros idiomas, ordenação com colação de acentos do pt-BR, filtro de seleção múltipla, destaque de linha por tom, cálculo de diff pelo SDK
 
 ---
 
@@ -130,11 +147,11 @@ Esta entrevista achou quatro problemas novos:
 6. O host embrulha o HTML no layout (`<main id="n3x-main">`), usa `Result.Title` no `<title>`, loga os avisos (FDD 35) e responde 200.
 
 **Fluxo de fragmento: página, ordenação ou filtro de uma tabela**
-1. O usuário ativa "Próxima": `<a href="?sidecars.page=3" hx-get="?sidecars.page=3" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">`.
+1. O usuário ativa "Próxima": `<a id="n3x-p-sidecars-next" href="?sidecars.page=3" hx-get="?sidecars.page=3" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">`.
 2. O htmx pede a mesma rota com `HX-Request: true` e `HX-Target: n3x-p-sidecars`.
 3. O host chama a mesma `PageFunc` (a árvore inteira é montada de novo) e o renderizador com `ModeFragment` e `Target: "n3x-p-sidecars"`.
 4. O renderizador valida a árvore inteira, para que IDs e níveis de heading sejam os mesmos da página, e emite só o bloco cujo ID de elemento é o alvo.
-5. O host devolve o fragmento sem layout; o htmx troca o bloco inteiro (`outerHTML`) e atualiza a URL.
+5. O host devolve o fragmento sem layout; o htmx troca o bloco inteiro (`outerHTML`) e atualiza a URL. Como o link ativado ("Próxima", `id="n3x-p-sidecars-next"`) volta no fragmento com o mesmo `id`, o htmx devolve o foco a ele (WCAG 2.4.3), e o resumo "Página X de Y" é uma região `role="status"` com `aria-live="polite"` (WCAG 4.1.3); nada disso usa JavaScript do plugin.
 6. Sem JavaScript, o mesmo `href` faz a navegação comum e o host devolve a página inteira com layout (aprimoramento progressivo).
 
 **Fluxo do filtro**
@@ -159,7 +176,7 @@ Esta entrevista achou quatro problemas novos:
 3. Filtra: cada filtro preenchido deixa só as linhas que passam; filtros diferentes combinam com "e".
 4. Ordena: pela ordenação da query, senão por `Table.Sort`, senão na ordem de entrega; ordenação estável, células vazias sempre por último.
 5. Pagina: `PageSize` (50 por padrão); página abaixo de 1 vira 1; página além da última vira a última.
-6. Emite: formulário de filtros, tabela com `<caption>`, cabeçalhos com `scope` e `aria-sort`, linhas da página e navegação "Anterior" e "Próxima" com o resumo "Página X de Y (linhas A a B de N)".
+6. Emite: formulário de filtros, tabela com `<caption>`, cabeçalhos com `scope` e `aria-sort`, linhas da página e navegação "Anterior" e "Próxima" com o resumo "Página X de Y (linhas A a B de N)". Links de ordenação, "Anterior", "Próxima" e o botão "Filtrar" levam `id` estável (contrato 7), e o resumo leva `role="status"` com `aria-live="polite"`.
 
 **Fluxos alternativos e exceções**
 - **Alvo de fragmento que não existe** (o bloco sumiu da árvore, aba antiga, alvo do próprio host): o renderizador devolve a página inteira com `Result.Mode = ModePage` e `Result.Retargeted = true`; o host responde com `HX-Retarget: #n3x-page` e `HX-Reswap: outerHTML` (pedido à FDD 35)
@@ -168,6 +185,7 @@ Esta entrevista achou quatro problemas novos:
 - **`ctx` cancelado ou com prazo estourado:** o renderizador devolve `ctx.Err()` sem escrever nada; o host responde 504 no prazo, como na `PageFunc` (FDD 08)
 - **Mais de 10.000 linhas entregues:** aviso no lugar das linhas, filtros visíveis; o guia do autor manda o plugin pré-filtrar lendo `q.Table(id).Filter(...)`, o que é seguro porque filtrar duas vezes dá o mesmo resultado
 - **Query inválida** (`sidecars.page=abc`, ordenação por coluna desconhecida ou não ordenável, opção de seleção que não existe, aba desconhecida): volta ao padrão, aviso `query_ignored`
+- **Lista de filhos, itens de `Detail`, itens de `Stage` ou etapas de `Pipeline` acima do limite (`MaxChildren` 200, `MaxStages` 16), ou árvore acima de `MaxWidgets` (5.000):** truncada, com os primeiros itens (o limite menos 1) e um item final "mais N itens não exibidos"; aviso `list_truncated` (aviso, não erro). Profundidade acima de `MaxDepth`, contexto inválido e campo obrigatório vazio continuam sendo erro estrutural
 - **Texto acima do limite ou com UTF-8 inválido:** cortado na fronteira de caractere com "…", ou com os bytes inválidos e caracteres de controle trocados por U+FFFD; avisos `text_truncated` e `invalid_text`
 - **`Code` acima de 256 KiB ou 5.000 linhas:** cortado, com a nota "Conteúdo cortado em N linhas."; aviso `code_truncated`
 - **Filtro de seleção automático com mais de 50 valores distintos:** vira campo de texto; aviso `filter_as_text`
@@ -243,8 +261,8 @@ flowchart LR
 
   const (
       MaxDepth    = 16   // profundidade máxima da árvore
-      MaxWidgets  = 5000 // widgets por árvore; linhas e células de tabela não contam
-      MaxChildren = 200  // itens por lista de filhos, abas, etapas e itens de Detail
+      MaxWidgets  = 5000 // widgets por árvore; linhas e células de tabela não contam; acima, truncado (list_truncated)
+      MaxChildren = 200  // itens por lista de filhos, de Detail e de Stage; acima, truncado (list_truncated)
       MaxIDLen    = 24   // IDs de Table e Tabs e chaves de coluna, filtro e aba
       MaxProblems = 100  // problemas devolvidos; acima, um último com a regra "truncated"
   )
@@ -258,6 +276,7 @@ flowchart LR
   - O renderizador nunca altera a árvore; a mesma árvore pode ser renderizada por várias goroutines ao mesmo tempo
   - IDs (`Table.ID`, `Tabs.ID`) e chaves (coluna, filtro, aba) casam com `^[a-z][a-z0-9_]{0,23}$`; IDs são únicos na árvore inteira, chaves são únicas no widget
   - `nil` numa lista de filhos é ignorado; `nil` em campo de filho único não renderiza nada
+  - **Excesso vindo de dados é truncado, não é erro:** lista de filhos (`Column`, `Row`, `Grid`), itens de `Detail` e de `Stage` acima de `MaxChildren`, etapas de `Pipeline` acima de `MaxStages` e árvore acima de `MaxWidgets` (contados em ordem de documento) ficam com os primeiros itens (o limite menos 1) e um item final "mais N itens não exibidos" (`Text` em `TextMuted`; em `Pipeline`, uma etapa final com esse título), que conta no limite; aviso `list_truncated` (contrato 10). Só profundidade (`depth`), contexto e campos obrigatórios são erro estrutural (confirmado)
   - Contextos de aninhamento:
 
 | Contexto | Onde | Widgets aceitos | Regra quando viola |
@@ -384,9 +403,11 @@ ui.Page{Title: "Negações", Description: "Contagem por serviço nas últimas 24
 <p class="n3x-page__desc">Contagem por serviço nas últimas 24 h.</p>
 <div class="n3x-column n3x-gap-md">
 <div class="n3x-row n3x-gap-md"><div class="n3x-stat"><span class="n3x-stat__label">Total</span><span class="n3x-stat__value">12.345</span></div></div>
-<details class="n3x-section n3x-section--fold" open="open"><summary><h2 id="n3x-p-_s1" class="n3x-section__title">Por serviço</h2></summary>
+<section class="n3x-section n3x-section--fold" aria-labelledby="n3x-p-_s1">
+<details open="open"><summary><h2 id="n3x-p-_s1" class="n3x-section__title">Por serviço</h2></summary>
 <p class="n3x-text">Sem dados ainda.</p>
 </details>
+</section>
 </div>
 </div>
 ```
@@ -435,7 +456,7 @@ ui.Page{Title: "Negações", Description: "Contagem por serviço nas últimas 24
   }
 
   type Detail struct {
-      Items []DetailItem // 1 a 200
+      Items []DetailItem // 1 a 200; acima, truncado (list_truncated)
   }
 
   type DetailItem struct {
@@ -468,7 +489,7 @@ ui.Page{Title: "Negações", Description: "Contagem por serviço nas últimas 24
   // Pipeline: sequência ordenada de etapas (L-67), ex.: a cadeia de plugins em ordem de fase.
   type Pipeline struct {
       Label  string  // obrigatório; nome acessível da sequência
-      Stages []Stage // 1 a 16, na ordem
+      Stages []Stage // 1 a 16, na ordem; acima, truncado (list_truncated)
   }
 
   type Stage struct {
@@ -483,7 +504,7 @@ ui.Page{Title: "Negações", Description: "Contagem por serviço nas últimas 24
   func FormatDecimal(f float64, places int) string // "1.234,50"; places de 0 a 6 (fora disso, ajustado)
   func FormatBytes(n int64) string                // "1,5 MiB" (base 1024, uma casa)
   func FormatDuration(d time.Duration) string     // "2m30s"; abaixo de 1 s, "250ms"
-  func FormatTime(t time.Time) string             // "2026-10-20 14:03:07 UTC"; zero = ""
+  func FormatTime(t time.Time) string             // "2026-10-20 14:03:07 UTC"; sempre em UTC (converte t); zero = ""
   ```
 - Método: n/a
 - Semântica:
@@ -495,7 +516,7 @@ ui.Page{Title: "Negações", Description: "Contagem por serviço nas últimas 24
   - **Origem do diff:** o `Code` recebe o diff unificado pronto. Quem calcula é o plugin (o core, na FDD 44, que já é dono do diff entre versões e instâncias); o SDK não calcula diff na v1
   - **`Empty`:** `<p class="n3x-empty">` com o texto ou o padrão
   - **`Pipeline` (L-67):** `<ol class="n3x-pipeline" aria-label="<Label>">` com um `<li>` por etapa (título, nota e itens). A ordem vem da lista ordenada, que o leitor de tela anuncia; a seta entre etapas é desenho de CSS, sem texto. Em tela larga as etapas ficam lado a lado, com rolagem horizontal dentro da região; em tela estreita, uma abaixo da outra. Para a tela de fluxo por serviço (FDD 45), cada etapa é uma fase e os itens são os plugins com ordem e política de falha em `Badge`
-  - **Formatação:** separador de milhar `.`, decimal `,`, horário sempre em UTC (o servidor não sabe o fuso de quem lê, sem JavaScript) (hipótese)
+  - **Formatação:** separador de milhar `.`, decimal `,`. O horário exibido (`FormatTime` e `TimeCell`) é SEMPRE em UTC, com o sufixo "UTC" no texto e `<time datetime>` em RFC 3339 (o servidor não sabe o fuso de quem lê e não há JavaScript). Não há fuso configurável nem campo novo em `Request` (confirmado)
 
 **Exemplo de requisição** (trecho da tela de fluxo por serviço, FDD 45)
 ```go
@@ -602,10 +623,10 @@ ui.Pipeline{Label: "Cadeia de pedidos na requisição", Stages: []ui.Stage{
   - **Filtro de texto:** trecho, sem diferenciar maiúsculas (folding simples do Unicode), na coluna indicada ou em todas. Valor de até 256 caracteres (`maxlength`)
   - **Filtro de seleção:** igualdade exata com o texto exibido. "Estado" é seleção sobre uma coluna de `BadgeCell`. `Options` nil gera as opções a partir dos valores distintos da coluna, ordenados; com mais de 50 valores distintos, o controle vira campo de texto (aviso `filter_as_text`). Valor que não é opção é ignorado (aviso `query_ignored`). Primeira opção sempre "Todos" (valor vazio)
   - **Combinação:** filtros diferentes combinam com "e"; um filtro tem um valor só na v1
-  - **Ordenação:** por coluna `Sortable`, pela query ou por `Table.Sort`. Números, bytes e durações por valor; horário por instante; texto e badge por letras minúsculas, sem colação de acentos (hipótese). Células de tipos diferentes na mesma coluna se ordenam pelo tipo e depois pelo valor. Vazias sempre por último, nos dois sentidos. Ordenação estável: empate mantém a ordem de entrega
-  - **Paginação:** `PageSize` (50 por padrão, até 500). Página abaixo de 1 vira 1, acima da última vira a última. Navegação "Anterior" e "Próxima" e o resumo "Página X de Y (linhas A a B de N)"; com uma página só, sem navegação
+  - **Ordenação:** por coluna `Sortable`, pela query ou por `Table.Sort`. Números, bytes e durações por valor; horário por instante; texto e badge por letras minúsculas, sem colação de acentos (confirmado). Células de tipos diferentes na mesma coluna se ordenam pelo tipo e depois pelo valor. Vazias sempre por último, nos dois sentidos. Ordenação estável: empate mantém a ordem de entrega
+  - **Paginação:** `PageSize` (50 por padrão, até 500). Página abaixo de 1 vira 1, acima da última vira a última. Navegação "Anterior" e "Próxima" e o resumo "Página X de Y (linhas A a B de N)", que é uma região `role="status"` com `aria-live="polite"`; com uma página só, sem navegação
   - **Links de estado:** URLs relativas que começam com `?` e mantêm os outros parâmetros da query atual, em ordem de chave (`url.Values.Encode`). Ordenar ou filtrar volta à página 1. Ordenar pela coluna já ordenada inverte o sentido
-  - **Acessibilidade:** `<caption>` sempre; `<th scope="col">`; `aria-sort` nas colunas ordenáveis; o link do cabeçalho leva o texto oculto "(ordem crescente; ativar para inverter)" ou "(ativar para ordenar)"; a tabela fica numa região rolável com foco por teclado e nome dado pelo `<caption>`; célula vazia mostra "-" com "vazio" só para leitor de tela; números alinhados à direita (`n3x-num`)
+  - **Acessibilidade:** `<caption>` sempre; `<th scope="col">`; `aria-sort` nas colunas ordenáveis; o link do cabeçalho leva o texto oculto "(ordem crescente; ativar para inverter)" ou "(ativar para ordenar)"; a tabela fica numa região rolável com foco por teclado e nome dado pelo `<caption>`; célula vazia mostra "-" com "vazio" só para leitor de tela; números alinhados à direita (`n3x-num`). **Foco depois da troca de fragmento (WCAG 2.4.3 e 4.1.3):** cada link de ordenação, "Anterior", "Próxima" e o botão "Filtrar" levam `id` estável (`n3x-p-<id>-sort-<coluna>`, `-prev`, `-next`, `-filter`), o que permite ao htmx devolver o foco ao elemento de mesmo `id` no bloco trocado; o resumo da paginação leva `role="status"` e `aria-live="polite"`, para o leitor de tela anunciar a página nova. Sem JavaScript do plugin (confirmado)
   - **Sem linhas:** uma linha única com `colspan` e o `EmptyText`. Acima de 10.000 linhas entregues: a mesma linha única com "Mais de 10.000 linhas: use os filtros para reduzir." e os filtros visíveis
   - **Em cartão:** primeira página, `Table.Sort` aplicado, sem formulário, sem links e sem navegação; com mais linhas, nota "Mostrando N de M"
   - Validação estrutural: `required` (ID, Caption, Label, Key, Value de opção), `id_format`, `duplicate` (coluna, filtro, opção), `duplicate_id`, `too_few` (sem colunas), `too_many`, `range` (`PageSize`), `cell_count` (linha com número de células diferente das colunas), `unknown_column` (`Sort` ou `Filter.Column`), `not_sortable`, `filter_column` (`FilterSelect` sem coluna), `enum`
@@ -638,17 +659,17 @@ ui.Table{
 <input type="hidden" name="periodo" value="24h" />
 <div class="n3x-filters__field"><label for="n3x-p-sidecars-f-estado">Estado</label><select id="n3x-p-sidecars-f-estado" name="sidecars.f.estado"><option value="">Todos</option><option value="conectado" selected="selected">conectado</option><option value="desconectado">desconectado</option></select></div>
 <div class="n3x-filters__field"><label for="n3x-p-sidecars-f-busca">Buscar</label><input id="n3x-p-sidecars-f-busca" type="search" name="sidecars.f.busca" value="" maxlength="256" /></div>
-<button type="submit" class="n3x-button">Filtrar</button>
+<button id="n3x-p-sidecars-filter" type="submit" class="n3x-button">Filtrar</button>
 <a class="n3x-link" href="?periodo=24h" hx-get="?periodo=24h" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Limpar filtros</a>
 </form>
 <div class="n3x-table__scroll" role="region" aria-labelledby="n3x-p-sidecars-caption" tabindex="0">
 <table class="n3x-table__grid">
 <caption id="n3x-p-sidecars-caption">Sidecars</caption>
 <thead><tr>
-<th scope="col" aria-sort="ascending"><a href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=-service" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=-service" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Serviço<span class="n3x-sr-only"> (ordem crescente; ativar para inverter)</span></a></th>
+<th scope="col" aria-sort="ascending"><a id="n3x-p-sidecars-sort-service" href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=-service" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=-service" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Serviço<span class="n3x-sr-only"> (ordem crescente; ativar para inverter)</span></a></th>
 <th scope="col">Instância</th>
-<th scope="col" aria-sort="none"><a href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=state" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=state" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Estado<span class="n3x-sr-only"> (ativar para ordenar)</span></a></th>
-<th scope="col" aria-sort="none"><a href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=seen" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=seen" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Visto por último<span class="n3x-sr-only"> (ativar para ordenar)</span></a></th>
+<th scope="col" aria-sort="none"><a id="n3x-p-sidecars-sort-state" href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=state" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=state" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Estado<span class="n3x-sr-only"> (ativar para ordenar)</span></a></th>
+<th scope="col" aria-sort="none"><a id="n3x-p-sidecars-sort-seen" href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=seen" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.sort=seen" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Visto por último<span class="n3x-sr-only"> (ativar para ordenar)</span></a></th>
 </tr></thead>
 <tbody>
 <tr><td>pedidos</td><td><code class="n3x-mono">pedidos-7d9f-xk2lp</code></td><td><span class="n3x-badge n3x-tone-ok">conectado</span></td><td><time datetime="2026-10-20T14:03:07Z">2026-10-20 14:03:07 UTC</time></td></tr>
@@ -657,9 +678,9 @@ ui.Table{
 </table>
 </div>
 <nav class="n3x-pager" aria-label="Paginação: Sidecars">
-<a rel="prev" href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.page=1" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.page=1" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Anterior</a>
-<span class="n3x-pager__status">Página 2 de 9 (linhas 51 a 100 de 412)</span>
-<a rel="next" href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.page=3" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.page=3" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Próxima</a>
+<a id="n3x-p-sidecars-prev" rel="prev" href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.page=1" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.page=1" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Anterior</a>
+<span class="n3x-pager__status" role="status" aria-live="polite">Página 2 de 9 (linhas 51 a 100 de 412)</span>
+<a id="n3x-p-sidecars-next" rel="next" href="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.page=3" hx-get="?periodo=24h&amp;sidecars.f.estado=conectado&amp;sidecars.page=3" hx-target="#n3x-p-sidecars" hx-swap="outerHTML" hx-push-url="true">Próxima</a>
 </nav>
 </div>
 ```
@@ -684,7 +705,7 @@ ui.Table{
 - Método: n/a (o estado chega pela query string da requisição `GET`)
 - Semântica:
   - **Chaves reservadas:** toda chave da query que contém `.` pertence ao renderizador. O plugin usa chaves sem `.` para os próprios parâmetros (ex.: `periodo`), e o renderizador as preserva nos links e formulários
-  - **Gramática** (hipótese; congelada na major, porque as URLs são compartilhadas entre operadores):
+  - **Gramática** (confirmado; o `.` pertence ao renderizador; congelada na major, porque as URLs são compartilhadas entre operadores):
     ```text
     <id>.page       = 1*6DIGIT, sem zero à esquerda, >= 1
     <id>.sort       = <coluna> | "-" <coluna>           ; "-" = decrescente
@@ -844,6 +865,8 @@ func (h *panel) pluginPage(c echo.Context, pg ctrl.PageEntry, q ui.Query) error 
     n3x-page                                   contêiner da página (PageContainerID)
     n3x-p-<id>                                 bloco Table ou Tabs da página (alvo de fragmento)
     n3x-p-<id>-caption | -f-<filtro> | -tab-<chave>   partes do bloco
+    n3x-p-<id>-sort-<coluna> | -prev | -next | -filter  controles da tabela (ordenação, paginação, botão Filtrar);
+                                               congelados na major, para o htmx devolver o foco depois da troca
     n3x-p-_s<N>                                heading de Section, N em ordem de documento
     n3x-c-<namespace>-<nome>-<cartão>          contêiner do cartão no host (CardContainerID)
     n3x-c-<namespace>-<nome>-<cartão>-_s<N>    heading de Section dentro do cartão
@@ -857,21 +880,21 @@ func (h *panel) pluginPage(c echo.Context, pg ctrl.PageEntry, q ui.Query) error 
     form label input select option button a
 
   Atributos permitidos
-    id class href rel role tabindex(só "0") aria-label aria-labelledby aria-describedby
-    aria-current aria-sort aria-hidden scope colspan datetime open
+    id class href rel role(só "region" e "status") tabindex(só "0") aria-label aria-labelledby aria-describedby
+    aria-current aria-sort aria-hidden aria-live(só "polite") scope colspan datetime open
     method action type name value selected maxlength for
     hx-get hx-target hx-swap hx-push-url
   ```
 - Método: n/a
 - Semântica:
   - **Unicidade de IDs:** `<id>` não tem `-` e não começa com `_`, então os IDs gerados (`_s<N>`, sufixos fixos) nunca colidem com os do autor. O escopo `n3x-c-<namespace>-<nome>-<cartão>` é injetivo, porque as partes do ID do plugin e o id do cartão não têm `-` (FDDs 01 e 08), e isola os cartões de plugins diferentes na mesma página
-  - **Estabilidade:** o ID de elemento de um bloco depende só do ID que o autor deu, não da posição na árvore; um bloco que muda de lugar continua alvo do mesmo fragmento
+  - **Estabilidade:** o ID de elemento de um bloco depende só do ID que o autor deu, não da posição na árvore; um bloco que muda de lugar continua alvo do mesmo fragmento. O mesmo vale para os IDs dos controles (`-sort-<coluna>`, `-prev`, `-next`, `-filter`): `<coluna>` e `<id>` não têm `-`, então eles não colidem com `-f-<filtro>`, `-tab-<chave>` nem `-caption`. Os novos IDs ficam congelados na major, junto com a gramática de chaves e IDs (confirmado)
   - **Regra de modo para o host** (pedido à FDD 35): `ModeFragment` só quando há `HX-Request: true` e o `HX-Target` começa com `n3x-p-`; qualquer outra requisição do htmx (`hx-boost`, restauração de histórico com `HX-History-Restore-Request`) recebe o conteúdo da página
   - **Fragmento igual ao trecho da página:** o fragmento de `n3x-p-<id>` é byte a byte igual ao elemento de mesmo ID dentro da saída de `ModePage` para a mesma árvore e a mesma query
   - **Escape:** um único escritor interno escreve todo texto e todo valor de atributo, entre aspas duplas, escapando `&`, `<`, `>`, `"` e `'`. Tags e nomes de atributo são constantes do pacote. Bytes UTF-8 inválidos e caracteres de controle (menos tabulação e quebra de linha) viram U+FFFD
   - **CSP:** nenhum `<script>`, nenhum atributo `style`, nenhum `on*`, nenhum `hx-on`, nenhuma URL com esquema ou começando com `//`: `href`, `action` e `hx-get` são sempre relativas e começam com `?`. Nenhuma entidade nomeada além de `&amp;`, `&lt;`, `&gt;`, `&quot;` e `&#39;`
   - **XML bem formado:** todo elemento é fechado, elementos vazios são escritos como `<input ... />` e atributos booleanos levam valor (`selected="selected"`, `open="open"`). Assim os testes do SDK leem a saída com `encoding/xml`, sem dependência externa
-  - **Foco e teclado:** só controles nativos (`a`, `button`, `input`, `select`) e regiões roláveis com `tabindex="0"`; nenhum `tabindex` positivo; ordem do DOM igual à ordem visual (o CSS não reordena)
+  - **Foco e teclado:** só controles nativos (`a`, `button`, `input`, `select`) e regiões roláveis com `tabindex="0"`; nenhum `tabindex` positivo; ordem do DOM igual à ordem visual (o CSS não reordena). Depois da troca de fragmento, o foco volta ao controle de mesmo `id` (htmx, WCAG 2.4.3), e o resumo da paginação é `role="status"` com `aria-live="polite"` (WCAG 4.1.3); nenhum JavaScript do plugin
   - Sem comentários HTML e sem espaço em branco significativo além das quebras de linha entre blocos
 
 **Exemplo de requisição**
@@ -883,7 +906,7 @@ ModeCard para o cartão "excedidos" do plugin giustech.quota, com uma Section
 **Exemplo de resposta**
 ```json
 {
-  "page": ["n3x-page", "n3x-p-_s1", "n3x-p-sidecars", "n3x-p-sidecars-caption", "n3x-p-sidecars-f-estado", "n3x-p-config", "n3x-p-config-tab-servico"],
+  "page": ["n3x-page", "n3x-p-_s1", "n3x-p-sidecars", "n3x-p-sidecars-caption", "n3x-p-sidecars-f-estado", "n3x-p-sidecars-filter", "n3x-p-sidecars-next", "n3x-p-config", "n3x-p-config-tab-servico"],
   "card": ["n3x-c-giustech-quota-excedidos-_s1"],
   "CardContainerID(giustech.quota, excedidos)": "n3x-c-giustech-quota-excedidos"
 }
@@ -907,15 +930,15 @@ ModeCard para o cartão "excedidos" do plugin giustech.quota, com uma Section
 - Semântica:
   - **Dono do tema:** o SDK. A folha cobre os widgets e o esqueleto do host (`n3x-shell`, `n3x-skip-link`, `n3x-nav`, `n3x-main`, `n3x-banner`, `n3x-cards`, `n3x-card`, `n3x-login`, `n3x-error`), para que as telas do host e as de plugin tenham o mesmo visual (FR-008). O host não tem folha própria para esses componentes (pedido à FDD 35)
   - **Classes:** prefixo `n3x-`, no formato bloco, `__elemento` e `--modificador`; utilitárias `n3x-sr-only` (só para leitor de tela), `n3x-num`, `n3x-mono`, `n3x-tone-<tom>` e `n3x-gap-<tamanho>`. As classes não fazem parte do contrato de plugin (plugin não escreve HTML); são um contrato interno entre SDK e host, versionado junto com o SDK
-  - **Tokens:** propriedades CSS em `:root`; tema escuro por `@media (prefers-color-scheme: dark)`, sem botão de troca (o botão exigiria JavaScript ou cookie) (hipótese)
+  - **Tokens:** propriedades CSS em `:root`; tema escuro por `@media (prefers-color-scheme: dark)`, sem botão de troca (o botão exigiria JavaScript ou cookie) (confirmado)
   - **Tipografia e espaço:** fontes do sistema (`system-ui` e `ui-monospace`), sem fonte baixada; 1rem de base, altura de linha 1,5; escala de espaço 0,25, 0,5, 1, 1,5 e 2rem; quebra de layout em 40rem
   - **Foco visível:** `:focus-visible` com contorno de 2px na cor `--n3x-focus` e afastamento de 2px
   - **Sem animação** e sem `@import`, `url()` externo ou `expression()`
   - **Cache:** o nome muda com o conteúdo, então o host pode servir com `Cache-Control: public, max-age=31536000, immutable` (decisão final na FDD 35)
-  - **Tamanho:** até 24 KiB sem compressão (hipótese)
+  - **Tamanho:** até 24 KiB sem compressão (confirmado)
   - **Contraste:** cada par de cor declarado (texto sobre fundo, texto do tom sobre o fundo do badge, borda de controle e foco sobre o fundo) é conferido por um teste do SDK com a fórmula da WCAG: 4,5:1 para texto e 3:1 para bordas e foco, nos dois temas
 
-Tokens de referência (hipótese; o teste de contraste é o portão):
+Tokens de referência (confirmado; o teste de contraste é o portão):
 
 | Token | Claro | Escuro | Uso |
 | --- | --- | --- | --- |
@@ -964,8 +987,8 @@ css := ui.Stylesheet()
     - segredo (`Node.Secret()`): `Row` com o valor mascarado (`***:<impressão digital>`) e o `Badge` "segredo"; com `***:plain`, `Badge` "em claro" em `ToneWarning`
     - valor fora do schema (`Node.Known()` falso): `Column` com o `Badge` "fora do schema" e um `Code` JSON do valor
     - objeto, map ou lista vazia: `Text` "(vazio)" em `TextMuted`, porque `Detail` exige pelo menos um item
-  - **Limites para a árvore caber nos limites do contrato 1:** mais de 200 itens num objeto, map ou lista: os 199 primeiros e um item "…" com "mais N itens não exibidos"; mais de 6 níveis de objeto: o resto vira `Code` JSON (hipótese)
-  - Erros: `s` nulo devolve `ErrNilSchema`; JSON inválido devolve o erro do `Walk`. Nunca devolve um valor de segredo em claro, porque a entrada já vem mascarada
+  - **Limites para a árvore caber nos limites do contrato 1:** mais de 200 itens num objeto, map ou lista: os 199 primeiros e um item final "…" com "mais N itens não exibidos", a mesma regra de truncamento da árvore (contrato 1), sem o aviso `list_truncated`, porque a função não renderiza e não devolve `Notice`; mais de 6 níveis de objeto: o resto vira `Code` JSON (confirmado)
+  - Erros: `s` nulo devolve `ErrNilSchema`; JSON inválido devolve o erro do `Walk`. Nunca devolve um valor de segredo em claro, porque a entrada já vem mascarada. `ConfigDetail` confia na entrada: a garantia de mascarar (`***...`, formato da FDD 37, no core) é de quem chama (core ou plugin); a função e o renderizador não mascaram por conta própria, e não há defesa em profundidade (confirmado)
   - Config sem schema (FR-007, "YAML bruto") fica com quem chama: `Code` com `CodeYAML` e o texto convertido pela FDD 44
 
 **Exemplo de requisição** (config de instância do plugin hipotético `giustech.ratelimit`, com o schema do contrato 1 da FDD 02, já normalizada e mascarada)
@@ -1019,7 +1042,7 @@ ui.Detail{Items: []ui.DetailItem{
   - Todos os problemas numa passada, em ordem de documento; até `MaxProblems` (100), e depois um último com a regra `truncated`
   - `Detail` cita só nomes de campo, IDs, chaves e limites; nunca um texto do plugin (que pode ter dado pessoal, como IP)
   - `Rule` é estável na major; os testes conferem `Path` e `Rule`, nunca o texto
-  - Limites de texto são de dados: o texto é cortado na fronteira de caractere, com "…", e gera aviso; nunca erro
+  - Limites de texto são de dados: o texto é cortado na fronteira de caractere, com "…", e gera aviso; nunca erro. O mesmo vale para o excesso de itens, etapas e widgets (`list_truncated`); `table_over_limit` continua à parte, porque nesse caso nenhuma linha é mostrada
   - Regras estruturais (erro, a renderização falha):
 
 | `Rule` | Condição |
@@ -1037,13 +1060,12 @@ ui.Detail{Items: []ui.DetailItem{
 | `enum` | Valor desconhecido de `Tone`, `Gap`, `Fold`, `TextStyle`, `CodeLang` ou `FilterKind` |
 | `range` | `PageSize` fora de 0 a 500; `Grid.Columns` fora de 0 a 4 |
 | `too_few` | `Table` sem colunas; `Tabs` com menos de 2 abas; `Detail` sem itens; `Pipeline` sem etapas |
-| `too_many` | Lista acima do limite (filhos, colunas, filtros, opções, abas, etapas, itens) |
+| `too_many` | Lista definida pelo código do plugin acima do limite: colunas, filtros, opções ou abas. Filhos, itens de `Detail` e de `Stage` e etapas acima do limite não são erro: são truncados (aviso `list_truncated`) |
 | `cell_count` | Linha com número de células diferente do de colunas |
 | `unknown_column` | `Table.Sort.Column` ou `Filter.Column` que não existe |
 | `not_sortable` | `Table.Sort` numa coluna sem `Sortable` |
 | `filter_column` | `FilterSelect` sem `Column` |
 | `depth` | Árvore com mais de 16 níveis |
-| `widgets` | Mais de 5.000 widgets |
 | `unknown_widget` | Tipo que o renderizador não conhece (só por defeito do SDK) |
 | `truncated` | Mais de 100 problemas |
 
@@ -1055,6 +1077,7 @@ ui.Detail{Items: []ui.DetailItem{
 | `invalid_text` | UTF-8 inválido ou caractere de controle | Troca por U+FFFD |
 | `code_truncated` | `Code` acima de 256 KiB ou 5.000 linhas | Corte com nota |
 | `table_over_limit` | Mais de 10.000 linhas entregues | Linha de aviso no lugar das linhas |
+| `list_truncated` | Lista de filhos, itens de `Detail` ou de `Stage` acima de 200, etapas de `Pipeline` acima de 16, ou árvore acima de 5.000 widgets (`Count` = itens não exibidos) | Os primeiros itens (o limite menos 1) e um item final "mais N itens não exibidos" |
 | `query_ignored` | Página, ordenação, opção ou aba inválida na query | Valor padrão |
 | `filter_as_text` | Seleção automática com mais de 50 valores distintos | Campo de texto |
 
@@ -1115,6 +1138,7 @@ fmt.Println(errors.Is(err, ui.ErrInvalidTree), errors.As(err, &fe), fe[0].Path, 
     - `name`: toda região (`role="region"`), `<nav>` e `<ol>` de `Pipeline` com nome acessível
     - `heading_order`: headings sem pular nível dentro da saída
     - `tabindex`: nenhum valor diferente de `0`
+    - `focus_id`: dentro de uma tabela (`n3x-table`), todo link de ordenação, o link `rel="prev"`, o link `rel="next"` e o botão "Filtrar" com `id` no formato `n3x-p-<id>-sort-<coluna>`, `-prev`, `-next` e `-filter`, e o resumo da paginação (`n3x-pager__status`) com `role="status"` e `aria-live="polite"`
     - `link_text`: todo `<a>` com texto e `href`
   - **`Gallery`:** as páginas que o host renderiza no modo de desenvolvimento para o axe da CI do controller (FDD 35) e que o próprio SDK usa nos golden. Página nova na galeria acompanha todo widget novo
   - `Lint` complementa o axe, não o substitui: contraste real, foco visível e leitura por tecnologia assistiva são conferidos no navegador (FDD 35)
@@ -1148,7 +1172,7 @@ div[1]/input[1]: campo sem <label for="a"> [label]
 | Construtor novo de `Cell`, método novo de `Query` ou `TableState`, campo novo em `Request` ou `Result`, aviso novo | Minor |
 | Afrouxar limite (mais linhas, mais colunas, texto maior) | Minor |
 | Mudança de marcação ou de CSS que não mexe em IDs nem em chaves | Patch ou minor, com nota |
-| Remover widget, campo, construtor ou método; mudar o significado do valor zero; apertar limite; mudar a gramática das chaves ou o esquema de IDs | Major; exceção: correção de segurança em patch, com nota (hipótese, igual às FDDs 05, 06 e 08) |
+| Remover widget, campo, construtor ou método; mudar o significado do valor zero; apertar limite; mudar a gramática das chaves ou o esquema de IDs | Major; exceção: correção de segurança em patch, com nota (confirmado, igual às FDDs 05, 06 e 08) |
 
 **Exemplo de requisição**
 ```text
@@ -1181,6 +1205,7 @@ Plugin A, compilado contra 1.0.0, usa só Table; plugin B usa Chart.
 | Falha ao escrever em `w` | Erro embrulhado | Cliente desconectado; log em `debug` |
 | Alvo de fragmento inexistente | Página inteira, `Retargeted` verdadeiro | Host manda `HX-Retarget: #n3x-page` e `HX-Reswap: outerHTML` |
 | Texto longo, UTF-8 inválido, código grande | Corte ou troca, com aviso | `text_truncated`, `invalid_text`, `code_truncated` |
+| Filhos, itens, etapas ou widgets acima do limite | Truncados, com item final "mais N itens não exibidos" | `list_truncated` (aviso, não erro) |
 | Mais de 10.000 linhas | Linha de aviso, filtros visíveis | `table_over_limit` |
 | Query inválida | Valor padrão | `query_ignored` |
 | Seleção automática com mais de 50 valores | Vira campo de texto | `filter_as_text` |
@@ -1215,10 +1240,10 @@ Plugin A, compilado contra 1.0.0, usa só Table; plugin B usa Chart.
 **Métricas**
 - O renderizador não publica métricas próprias (ASSUNTO; biblioteca pura). O que ele mede volta no `Result` (`Bytes`, `Widgets`, `Rows`, `Notices`)
 - O host já mede a página inteira com `n3x_controller_panel_duration_seconds{route}` e `n3x_controller_panel_requests_total{route,status}`, e o panic com `n3x_controller_plugin_panics_total{plugin,kind="panel"}` (HLD do `n3x-controller` e FDD 08)
-- Métricas sugeridas ao host, a decidir na FDD 35 (hipótese):
+- Métricas sugeridas ao host, a decidir na FDD 35 (confirmado):
   - `n3x_controller_panel_render_failures_total{plugin, reason}`, counter, `reason` em `invalid_tree`, `output_too_large`, `canceled`
-  - `n3x_controller_panel_render_notices_total{plugin, kind}`, counter, `kind` com os 6 avisos do contrato 10
-- Cardinalidade: por plugin, 3 motivos mais 6 avisos; nenhum rótulo com path real, ID de tabela, query ou texto
+  - `n3x_controller_panel_render_notices_total{plugin, kind}`, counter, `kind` com os 7 avisos do contrato 10
+- Cardinalidade: por plugin, 3 motivos mais 7 avisos; nenhum rótulo com path real, ID de tabela, query ou texto
 - Na CI do SDK: `ns/op`, `allocs/op` e `B/op` dos benchmarks do renderizador a cada PR, e o tamanho da folha de estilo
 
 **Logs**
@@ -1249,9 +1274,9 @@ Plugin A, compilado contra 1.0.0, usa só Table; plugin B usa Chart.
 | `plugin/` (FDDs 01 e 02) | mesma versão do SDK | `ID`, `FieldError`, `FieldErrors`, `Schema.Walk`, `Node` |
 | `controller/` (pacote `ctrl`, FDD 08) | mesma versão do SDK | Consumidor: `PageFunc` e `CardFunc`; `ctrl` importa `ui`, nunca o contrário |
 | templ | não usado no SDK | Fica só no host, no layout (FDD 35) (L-22) |
-| htmx | 2.0.x (hipótese) | Embutido e servido pelo host; o renderizador só usa `hx-get`, `hx-target`, `hx-swap` e `hx-push-url` |
+| htmx | 2.0.x (confirmado) | Embutido e servido pelo host; o renderizador só usa `hx-get`, `hx-target`, `hx-swap` e `hx-push-url` |
 | axe-core | a da CI do controller | Roda na galeria e nas telas do host e do core (FDD 35) |
-| Navegadores | duas últimas versões estáveis de Chrome, Edge, Firefox e Safari (hipótese) | CSS grid, flex com `gap`, `:focus-visible`, `prefers-color-scheme`, `<details>` |
+| Navegadores | duas últimas versões estáveis de Chrome, Edge, Firefox e Safari (confirmado) | CSS grid, flex com `gap`, `:focus-visible`, `prefers-color-scheme`, `<details>` |
 | `n3x-controller` `host/panel` (FDD 35) | compilado com o SDK do binário | Chama `Render`, serve `Stylesheet`, usa as classes do esqueleto |
 | Kit `sdktest` (FDD 12) | mesma versão do SDK | Renderiza com o mesmo renderizador e usa `uitest.Lint` |
 | `n3x-plugin-core` (FDDs 44 e 45) | consumidor | Telas com `Table`, `Pipeline`, `Code` com diff e `ConfigDetail` |
@@ -1268,7 +1293,7 @@ Plugin A, compilado contra 1.0.0, usa só Table; plugin B usa Chart.
 
 ### 9. Critérios de aceite técnicos
 
-- **Escape (fuzzing):** `FuzzWidgetText` (todo campo de texto de todo widget), `FuzzQueryState`, `FuzzConfigDetail` e `FuzzTree` (árvores aleatórias) rodam 5 minutos por alvo na CI noturna sem panic e sem falha de propriedade; o corpus inicial inclui `<script>alert(1)</script>`, `"><a href=x>`, `javascript:`, `&amp;`, U+0000, U+202E e bytes UTF-8 inválidos (hipótese de duração, igual às FDDs anteriores)
+- **Escape (fuzzing):** `FuzzWidgetText` (todo campo de texto de todo widget), `FuzzQueryState`, `FuzzConfigDetail` e `FuzzTree` (árvores aleatórias) rodam 5 minutos por alvo na CI noturna sem panic e sem falha de propriedade; o corpus inicial inclui `<script>alert(1)</script>`, `"><a href=x>`, `javascript:`, `&amp;`, U+0000, U+202E e bytes UTF-8 inválidos (confirmado, igual às FDDs anteriores)
 - **Propriedade de estrutura:** para todo texto `s` posto num campo, a saída é XML bem formado, a sequência de elementos e atributos é igual à da saída com `s = "x"`, e o texto lido de volta é `s` saneado (corte e U+FFFD aplicados)
 - **CSP:** `uitest.Lint` sem problemas em todos os golden e em todas as páginas da galeria; uma busca nesses arquivos não acha `<script`, ` style=`, ` on` seguido de letras e `=`, `hx-on`, `javascript:` nem `//` em `href`, `action` ou `hx-get`
 - **Golden:** pelo menos um arquivo por widget em modo página, um por bloco com ID em modo fragmento (`Table` e `Tabs`) e um por widget aceito em modo cartão, em `controller/ui/testdata/golden/`; 100 renderizações seguidas da mesma entrada dão os mesmos bytes
@@ -1281,9 +1306,12 @@ Plugin A, compilado contra 1.0.0, usa só Table; plugin B usa Chart.
   - `PageSize` 0 mostra 50 linhas; 10.001 linhas entregues dão 0 linhas emitidas, a linha de aviso e `table_over_limit`; 51 valores distintos num filtro automático dão campo de texto e `filter_as_text`
   - links de ordenação e de filtro mantêm `periodo=24h`, voltam à página 1 e saem com as chaves em ordem; o exemplo do contrato 4 produz o HTML mostrado (sem o comentário)
 - **Cartão:** `Table` em `ModeCard` sai sem `<form>`, sem `<a>` e sem `<nav>`, com "Mostrando N de M"; `Page` e `Tabs` em cartão dão `card_widget`; IDs começam com `CardContainerID`; o primeiro heading é `h3` com `HeadingBase` 0
+- **Truncamento (`list_truncated`):** `Column` com 250 filhos dá 199 filhos mais o item final "mais 51 itens não exibidos" e um aviso `list_truncated` com `Count` 51 (sem erro, `Render` devolve `nil`); `Detail` com 201 itens e `Pipeline` com 17 etapas truncam do mesmo modo; árvore com 5.001 widgets renderiza sem erro e com o aviso; 17 níveis dão `ErrInvalidTree` com `depth`; a saída truncada passa em `uitest.Lint`
+- **Foco e anúncio depois da troca de fragmento:** no HTML, cada link de ordenação, "Anterior", "Próxima" e o botão "Filtrar" têm o `id` `n3x-p-<id>-sort-<coluna>`, `-prev`, `-next` e `-filter`, o fragmento repete os mesmos IDs, e o resumo da paginação tem `role="status"` e `aria-live="polite"`; `uitest.Lint` acusa `focus_id` quando falta um deles. No navegador (CI do controller, FDD 35), depois de ordenar, paginar e filtrar via htmx, `document.activeElement` é o elemento de mesmo `id` quando ele existe no bloco novo, e o resumo é anunciado
+- **Horário:** `FormatTime` e `TimeCell` de um instante em outro fuso saem em UTC, com o sufixo "UTC" e `<time datetime>` em RFC 3339
 - **Headings:** `Page` dá `h1`; seções aninhadas dão `h2` a `h6` e param em `h6`; os níveis no fragmento são iguais aos da página
 - **IDs:** `duplicate_id` para dois `Table` com o mesmo ID, inclusive em ramos diferentes; dois cartões de plugins diferentes com a mesma estrutura na mesma visão geral não repetem nenhum ID
-- **Desempenho** (benchmarks com `-benchmem` e `-count=10`, mediana, no executor padrão da CI, hipótese de máquina):
+- **Desempenho** (benchmarks com `-benchmem` e `-count=10`, mediana, no executor padrão da CI, confirmado):
   - B1: 500 linhas por 8 colunas, `PageSize` 500, ordenadas por coluna de texto: até 5 ms por operação, até 100 alocações e até 128 KiB alocados por operação, com `w = io.Discard`
   - B2: 500 linhas entregues, página de 50, ordenação e 2 filtros: até 1 ms por operação
   - B3: 10.000 linhas entregues, página de 50, ordenação: até 20 ms por operação
@@ -1298,7 +1326,7 @@ Plugin A, compilado contra 1.0.0, usa só Table; plugin B usa Chart.
 - **Acessibilidade no navegador** (CI do controller, FDD 35): o axe com as tags `wcag2a`, `wcag2aa`, `wcag21a` e `wcag21aa` não acha violações em nenhuma página de `uitest.Gallery()`, no tema claro e no escuro
 - **Dependências:** `go list -deps ./controller/ui ./controller/ui/uitest` só lista biblioteca padrão, `plugin/` e pacotes de `controller/ui`; `go vet` e `go test -race ./controller/ui/...` passam
 - **Superfície:** golden de `go doc -all ./controller/ui` e `./controller/ui/uitest` igual ao versionado
-- **Cobertura:** no mínimo 90% de linhas em `controller/ui` (hipótese, igual às FDDs anteriores)
+- **Cobertura:** no mínimo 90% de linhas em `controller/ui` (confirmado, igual às FDDs anteriores)
 - **Critério do PRD (com as FDDs 12, 13 e 35):** a página com `Table` e o cartão com `Stat` do `n3x.example` renderizam no host falso e no painel real sem mudar nenhum repositório do core
 
 ---

@@ -47,27 +47,43 @@ Consome, sem redefinir: `plugin.ParseID`, `CheckNamespace`, `DecodeManifest`, `P
   - FDD 19: a CI gerada confere, na tag, que a tag é igual a `version` do manifesto (contrato 9)
   - FDD 20: `go.mod` gerado com o SDK igual ao limite inferior da faixa `sdk`, e a checagem que mantém os dois iguais na CI do plugin (contratos 3 e 9)
 
+**Decisões aprovadas na clarificação**
+- `schema-check --against latest` usa como base a maior tag menor ou igual à versão atual do manifesto, exceto quando a tag igual aponta para o próprio HEAD (push da tag), caso em que usa a anterior; assim detecta quebra feita depois da publicação na mesma versão
+- Na série `0.x` do plugin, "mesma linha = mesma minor": a quebra de config é permitida de `0.3.x` para `0.4.0`, não dentro de `0.3.x`; isso estende o texto do PRD e do ADR-020 ("mesma major") para a série 0 (confirmado)
+- Licença do molde: o `LICENSE` Apache 2.0 é copiado por padrão e o `README.md` gerado leva a atribuição; `--license none` desliga as duas coisas (a flag passa a ter padrão `apache-2.0`)
+- Nova flag `--no-proto` para o plugin de duas metades sem conversa com o controller: omite `proto/` e a tarefa `report`/stubs, com a nova condição `noproto` nos marcadores do molde; exige os marcadores no exemplo (FDD 13) e uma quarta combinação testada na CI do SDK (proxy; controller; duas metades; duas metades com `--no-proto`)
+- O `cmd/n3x-new` passa a depender também de `yamlconv`, `schemagen`, `internal/scaffold` e `internal/schemadiff`; HLD (L151/L54) e ADR-011 devem registrar esses pacotes; ADR-013 fala em "cinco lugares" e a FDD trata nove formas de ID
+- As demais hipóteses numéricas, de teste e de baixo risco ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- A faixa de códigos B001 a B014 do PRD (B014 aceito) não cobre o `N3X-B016` citado no contrato 3 (sobre a diretiva `go`, FDD 20) nem o `B015` da mesma série; a numeração a registrar fica para o PRD/HLD, sem invenção aqui
+- A família `N3X-N` (`N3X-N001` a `N3X-N004` e `N3X-N010` a `N3X-N013`, com `docs/n3x-new-erros.md`) precisa ser registrada no PRD/HLD
+- A FDD 13 deve receber os marcadores `noproto`, o `LICENSE`, a variável `N3X_RELEASE_TAG`, os alvos do `Makefile`, o `TestInventarioDoID` com `scaffold.Scan` e o `.gitignore` e o `buf.yaml` sem o nome do tipo
+- A premissa técnica do modo arquivo `go run _n3x/schemacheck/main.go` com `-mod=readonly` e o `go.work` do `--dev-sdk` é confirmada no primeiro teste da implementação
+- Divergências para o Workflow 3: PRD FR-014 (`proto/` dispensável também com duas metades, via `--no-proto`); PRD, ADR-020 e ADR-021 (série `0.x` do plugin, mesma minor); PRD (família `N3X-N` e faixa de códigos); HLD l.279/283 (`latest` e códigos de saída)
+- Dependem de outros repositórios: FDD 19 (`add`, `version` igual à tag, N3X-B002/B003), 20, 17/21, 22, 24, 36, 47, 48
+
 ---
 
 ### 2. Objetivos técnicos
 
-- **Nenhum resto do molde.** Invariante: no plugin gerado com um ID diferente de `n3x.example`, `grep -rIi example` não encontra nenhuma linha (fora o `LICENSE` opcional, copiado sem troca), e toda forma do ID novo bate com as derivações de `plugin.ID` (FDD 01). Medida: conferido pelo próprio gerador antes de escrever (regra `template_residue`) e por teste na CI do SDK para as três combinações de metades.
-- **Plugin gerado verde de saída.** Medida: para cada combinação de `--halves` (`proxy,controller`, `proxy`, `controller`), o plugin gerado passa em `go vet ./...`, `go test -race ./...`, `go test ./...` sem `-race`, `buf lint` e `buf generate` sem diferença (quando tem `proto/`) e `schema-check --against latest`, em 100% dos PRs do SDK.
+- **Nenhum resto do molde.** Invariante: no plugin gerado com um ID diferente de `n3x.example`, `grep -rIi example` não encontra nenhuma linha (fora o `LICENSE`, copiado sem troca, e fora as ocorrências que fazem parte do ID, do módulo ou do nome do tipo novos quando estes contêm "example"), e toda forma do ID novo bate com as derivações de `plugin.ID` (FDD 01). Medida: conferido pelo próprio gerador antes de escrever (regra `template_residue`) e por teste na CI do SDK para as quatro combinações (proxy; controller; duas metades; duas metades com `--no-proto`).
+- **Plugin gerado verde de saída.** Medida: para cada combinação (`--halves proxy,controller`, `--halves proxy`, `--halves controller` e `--halves proxy,controller --no-proto`), o plugin gerado passa em `go vet ./...`, `go test -race ./...`, `go test ./...` sem `-race`, `buf lint` e `buf generate` sem diferença (quando tem `proto/`) e `schema-check --against latest`, em 100% dos PRs do SDK.
 - **Molde e exemplo sem divergência.** Invariante: gerar o próprio `n3x.example` com o módulo `github.com/giustech/n3x-sdk/example` a partir do `example/` reproduz byte a byte todos os arquivos copiados do molde. Medida: teste de identidade na CI do SDK; qualquer diferença reprova o PR.
 - **Saída atômica.** Invariante: o gerador nunca deixa uma árvore parcial no destino; ou a árvore inteira aparece, ou nada aparece. Medida: teste com falha injetada em cada etapa de escrita.
 - **Determinismo.** Invariante: mesma versão da ferramenta, mesmo molde e mesmos argumentos geram os mesmos bytes, em qualquer sistema operacional. Medida: duas gerações seguidas em Linux e Windows dão árvores com o mesmo SHA-256 por arquivo (fora os stubs gerados pelo `buf`, que têm o próprio determinismo).
-- **Sem falso negativo nas quebras do PRD.** Medida: o `schema-check` reprova 100% dos casos do corpus de quebra (remover, renomear, tornar obrigatório, mudar tipo, endurecer limite, tirar valor de `enum`, deixar de ser segredo, tirar metade, tirar fase do manifesto) e aprova 100% do corpus compatível (campo novo com default ou ponteiro, afrouxar limite, acrescentar valor de `enum`), com no mínimo 60 pares de schema (hipótese).
-- **Rápido o bastante para a CI.** Medida, no runner da CI com cache quente (hipótese): a montagem da árvore sem os passos externos em até 2 s; a geração completa com `go mod tidy` e `buf generate` em até 90 s; o `schema-check` com o auxiliar em até 20 s.
+- **Sem falso negativo nas quebras do PRD.** Medida: o `schema-check` reprova 100% dos casos do corpus de quebra (remover, renomear, tornar obrigatório, mudar tipo, endurecer limite, tirar valor de `enum`, deixar de ser segredo, tirar metade, tirar fase do manifesto) e aprova 100% do corpus compatível (campo novo com default ou ponteiro, afrouxar limite, acrescentar valor de `enum`), com no mínimo 60 pares de schema (confirmado).
+- **Rápido o bastante para a CI.** Medida, no runner da CI com cache quente (confirmado): a montagem da árvore sem os passos externos em até 2 s; a geração completa com `go mod tidy` e `buf generate` em até 90 s; o `schema-check` com o auxiliar em até 20 s.
 
 ---
 
 ### 3. Escopo e exclusões
 
 **Incluído**
-- Comando de criação `n3x-new <id>`: argumentos, flags, padrões, validação do ID e do namespace, nome do tipo, versão inicial e fase (contrato 1)
+- Comando de criação `n3x-new <id>`: argumentos, flags (inclusive `--no-proto`, para duas metades sem conversa com o controller), padrões, validação do ID e do namespace, nome do tipo, versão inicial e fase (contrato 1)
 - Origem do molde (download do módulo do exemplo na mesma versão da ferramenta, ou pasta local), validação do molde e montagem atômica da árvore (contratos 1 e 2)
 - Tabela de transformação derivada do inventário da FDD 13, regras de pasta por metade, marcadores de região e de arquivo, renomeação de caminhos e formatação do Go (contrato 2)
-- Árvore gerada para cada combinação de `--halves`, manifesto, `go.mod` com o SDK no limite inferior da faixa, arquivos próprios do gerador (`README.md`, `.gitignore`, `.github/workflows/ci.yml`, `LICENSE` opcional) (contrato 3)
+- Árvore gerada para cada combinação de `--halves`, manifesto, `go.mod` com o SDK no limite inferior da faixa, arquivos próprios do gerador (`README.md`, `.gitignore`, `.github/workflows/ci.yml`, `LICENSE`, copiado por padrão) (contrato 3)
 - Passos depois da escrita: `go mod tidy`, compilação das ferramentas do `tools/` e `buf generate`, e verificação opcional (contrato 1)
 - Comando `schema-check`: resolução da linha de base pela tag, prefixo de tag de módulo aninhado, schema atual gerado da struct e conferido contra o golden, comparação semântica, regras de mudança, regra da série `0.x` e da major nova, relatório em texto e JSON (contratos 4 a 7)
 - Programa auxiliar do `schema-check` (contrato 8)
@@ -81,7 +97,7 @@ Consome, sem redefinir: `plugin.ParseID`, `CheckNamespace`, `DecodeManifest`, `P
 - Validação da estrutura no build (`N3X-B002` e `N3X-B003`): FDD 19 (BLD-01)
 - Guia do autor com o ciclo completo: FDD 47 (SDK-15)
 - `buf breaking` dos protos: configurado no `Makefile` do molde e chamado pela CI gerada, sem lógica nesta ferramenta
-- Atualizar um plugin já gerado para um molde mais novo (sem `n3x-new upgrade` na v1) (hipótese)
+- Atualizar um plugin já gerado para um molde mais novo (sem `n3x-new upgrade` na v1) (confirmado)
 - Gerar `connectors/`: a pasta só existe quando o plugin tem clients próprios, e o exemplo não tem (FDD 13)
 - Rodar o plugin gerado no builder e no painel de verdade: CI cruzada da FDD 48, que recebe o pedido
 
@@ -92,8 +108,8 @@ Consome, sem redefinir: `plugin.ParseID`, `CheckNamespace`, `DecodeManifest`, `P
 **Fluxo principal: criação (`n3x-new giustech.ratelimit --halves proxy,controller`)**
 1. **Argumentos.** Lê o ID e as flags. Valida tudo antes de qualquer rede ou escrita, juntando os problemas numa passada:
    - `plugin.ParseID(id)`; namespace fora dos reservados às famílias da plataforma (`plugin`, `controller`, `sidecar`, `build` e `config`, FDD 06); ID diferente de `n3x.core`
-   - módulo: o de `--module` ou o padrão `github.com/<namespace>/n3x-plugin-<nome com _ trocado por ->`; sintaxe de caminho de módulo Go; `plugin.CheckNamespace(id, módulo)` (namespace `n3x` só com módulo `github.com/giustech/`)
-   - `--halves` com `proxy`, `controller` ou os dois, sem repetição; `--phase` por `plugin.ParsePhase`; `--version` por `plugin.ParseVersion`
+   - módulo: o de `--module` ou o padrão `github.com/<namespace>/n3x-plugin-<nome com _ trocado por ->` (no namespace `n3x`, `github.com/giustech/n3x-plugin-<nome>`, porque `github.com/n3x/...` é recusado por `CheckNamespace`); sintaxe de caminho de módulo Go; `plugin.CheckNamespace(id, módulo)` (namespace `n3x` só com módulo `github.com/giustech/`)
+   - `--halves` com `proxy`, `controller` ou os dois, sem repetição; `--no-proto` só com as duas metades; `--phase` por `plugin.ParsePhase`; `--version` por `plugin.ParseVersion`
    - nome do tipo: o de `--type-name` ou `scaffold.PascalName(id)`; casa com `^[A-Z][A-Za-z0-9]{0,63}$`
    - destino: o de `--dir` ou o último elemento do módulo; não existe ou é diretório vazio
 2. **Molde.** Com `--template-dir`, usa a pasta. Senão, lê a própria versão (`debug.ReadBuildInfo().Main.Version`) e roda `go mod download -json github.com/giustech/n3x-sdk/example@<versão>` (prazo de 120 s). Versão `(devel)` sem `--template-dir` é erro de uso.
@@ -104,35 +120,36 @@ Consome, sem redefinir: `plugin.ParseID`, `CheckNamespace`, `DecodeManifest`, `P
    - aplica a tabela de formas numa passada só, da forma mais longa para a mais curta, nos conteúdos e nos caminhos
    - escreve o `n3x-plugin.yaml` a partir dos valores (não por troca de texto) e o valida de novo com `DecodeManifest` e `CheckNamespace`
    - troca só a linha `module` do `go.mod`; o `require` do SDK fica o do molde, que vira o limite inferior da faixa `sdk` do manifesto
-   - acrescenta os arquivos próprios do gerador (`README.md`, `.gitignore`, `.github/workflows/ci.yml` e, com `--license apache-2.0`, o `LICENSE` do molde)
+   - acrescenta os arquivos próprios do gerador (`README.md` com a atribuição ao molde, `.gitignore`, `.github/workflows/ci.yml` e, salvo com `--license none`, o `LICENSE` Apache 2.0 do molde)
    - formata todo `.go` com `go/format`; um arquivo que não analisa é erro do molde (`template_marker`)
    - confere a ausência de resto (`template_residue`)
-5. **Escrita atômica.** Grava a árvore numa pasta temporária irmã do destino (`.<destino>.n3x-new-<aleatório>`) e renomeia para o destino; com destino vazio já existente, move o conteúdo e remove a temporária. Qualquer falha remove a temporária.
+5. **Escrita atômica.** Grava a árvore numa pasta temporária irmã do destino (`.<destino>.n3x-new-<aleatório>`) e renomeia para o destino; com destino vazio já existente, move o conteúdo e remove a temporária. No Windows, `rename` sobre diretório existente falha, então a alternativa segura é copiar o conteúdo da temporária para o destino vazio e só então remover a temporária. Qualquer falha remove a temporária.
 6. **Passos externos** (no destino, cada um com prazo, saída capturada e mostrada só em falha):
    - `go mod tidy -go=<diretiva go do molde>` com `GOTOOLCHAIN=local` (120 s)
-   - com `proto/`: `go -C tools build -o ../bin/` do `buf`, `protoc-gen-go` e `protoc-gen-go-grpc` (300 s) e `bin/buf generate` com `bin/` à frente no `PATH` (60 s); `--no-generate` pula e avisa
+   - com `proto/` (não com `--no-proto`): `go -C tools build -o ../bin/` do `buf`, `protoc-gen-go` e `protoc-gen-go-grpc` (300 s) e `bin/buf generate` com `bin/` à frente no `PATH` (60 s); `--no-generate` pula e avisa
    - com `--verify`: `go vet ./...` e `go test ./...` sem `-race` (600 s)
 7. **Resumo.** Uma linha por arquivo criado (`criado agent/agent.go`), depois as derivações do ID e os próximos passos (`make check`, `git init`, primeira tag `v<versão>`).
 
 **Fluxo principal: `schema-check --against latest` na CI do plugin**
 1. Acha a raiz do módulo (`--dir`, padrão `.`), lê `n3x-plugin.yaml` com `yamlconv` e `DecodeManifest` (versão atual, metades e fases).
 2. Acha a raiz do git e o prefixo do módulo (`git rev-parse --show-toplevel` e `--show-prefix`); o prefixo de tag é esse prefixo (vazio na raiz; `example/` para o exemplo dentro do SDK; regra de tag de módulo aninhado do Go).
-3. Resolve a linha de base: com tag explícita, confere que existe; com `latest`, lista `git tag --list '<prefixo>v*'`, descarta o que não é semver, e escolhe a maior versão estritamente menor que a atual. Sem nenhuma: relatório "sem versão anterior" e saída 0.
+3. Resolve a linha de base: com tag explícita, confere que existe; com `latest`, lista `git tag --list '<prefixo>v*'`, descarta o que não é semver, e escolhe a maior versão menor ou igual à atual, exceto quando a tag igual aponta para o próprio HEAD (caso do push da tag), em que usa a anterior; assim a quebra feita depois da publicação, na mesma versão, é detectada. Pré-release é ignorado como base, salvo quando a versão atual também é pré-release; a base não precisa ser ancestral do HEAD (as tags só são listadas). Sem nenhuma: relatório "sem versão anterior" e saída 0.
 4. Lê da tag o manifesto (`git show <tag>:<prefixo>n3x-plugin.yaml`) e, para cada metade dele, o golden (`git show <tag>:<prefixo>types/testdata/schema/<metade>.json`); cada golden passa por `plugin.ParseSchema`. Golden ausente na tag: gera o schema da tag num `git worktree` temporário com o auxiliar do contrato 8 (aviso `baseline_generated`), salvo `--no-baseline-generate`.
 5. Schema atual: roda o auxiliar do contrato 8 no módulo e compara os bytes com o golden do diretório de trabalho; diferença é `golden_stale` (ou, com `--update-golden`, regrava o golden e segue). Com `--no-generate`, usa o golden sem compilar nada.
-6. Classifica a linha: mesma major (na série `0.x`, mesma minor) é "mesma linha"; major maior (na série `0.x`, minor maior) é "linha nova"; versão atual menor que a base é erro (`version_regressed`).
+6. Classifica a linha: mesma major (na série `0.x`, mesma minor: a quebra de config é permitida de `0.3.x` para `0.4.0`, não dentro de `0.3.x`) é "mesma linha"; major maior (na série `0.x`, minor maior) é "linha nova"; versão atual menor que a base é erro (`version_regressed`).
 7. Compara, com `schemadiff`, o manifesto (metades, fases e padrões) e cada metade presente nos dois lados, nó a nó (contrato 5).
 8. Escreve o relatório (contrato 6) e sai com 0 (compatível), 2 (quebra na mesma linha) ou o código do problema de ambiente.
 
 **Fluxos alternativos e exceções**
 - **Plugin só de proxy (`--halves proxy`):** saem `controller/`, `proto/`, `buf.yaml`, `buf.gen.yaml`, `tools/`, `types/testdata/schema/controller.json`, `testdata/n3x/controller-plugins.yaml` e as regiões `controller` e `proxy+controller` (tarefa `report`, imports dos stubs, `ControllerConfig`, testes com controller falso); manifesto `halves: [proxy]`, sem bloco `controller`; nenhum passo de `buf`
 - **Plugin só de controller (`--halves controller`):** saem `agent/`, `proto/`, `buf.yaml`, `buf.gen.yaml`, `tools/`, `types/testdata/schema/proxy.json`, `testdata/cases.json`, `testdata/n3x/sidecar-plugins.yaml` e as regiões `proxy` e `proxy+controller` (capacidade `GRPC`, handler `Report`, testes que mandam relatório); ficam as páginas, o cartão e a ação, sem fonte de dados (o `README.md` gerado diz isso); manifesto `halves: [controller]`
-- **Namespace `n3x` com módulo de fora de `github.com/giustech/`:** recusado com `N3X-N001` (`reserved_namespace`), a mesma regra que o build aplica com `N3X-B007`; não há flag para forçar, porque o build falharia de qualquer jeito (hipótese)
+- **Duas metades sem conversa com o controller (`--halves proxy,controller --no-proto`):** saem `proto/`, `buf.yaml`, `buf.gen.yaml`, `tools/` e as regiões e arquivos marcados `noproto` (tarefa `report`, imports dos stubs, handler `Report` e os testes que mandam relatório); ficam as duas metades, o cartão e as páginas, sem relatório do proxy; nenhum passo de `buf`. Cobre literalmente o fluxo alternativo do PRD FR-014 (`proto/` dispensável sem conversa com o controller); `--no-proto` com uma metade só é erro de entrada (`halves`), porque nela `proto/` já não existe
+- **Namespace `n3x` com módulo de fora de `github.com/giustech/`:** recusado com `N3X-N001` (`reserved_namespace`), a mesma regra que o build aplica com `N3X-B007`; não há flag para forçar, porque o build falharia de qualquer jeito (confirmado: sem flag para forçar)
 - **Ferramenta rodando de um commit (`@<hash>` ou pseudo-versão):** não existe `example@<pseudo-versão>`; erro `N3X-N003` (`template_version`) com a sugestão de `--template-dir` ou de uma tag
 - **Tag do SDK publicada antes da tag do exemplo:** na janela entre as duas, o download falha com `template_version` e a mensagem "molde da versão X ainda não publicado"; a CI de release do SDK fecha a janela (seção 10)
 - **Sem rede depois do download:** `go mod tidy` ou a compilação do `buf` falham; a árvore já está no destino, a saída é 5 (`N3X-N004`) e a mensagem traz o comando para terminar (`make tools generate`)
 - **`schema-check` numa major nova:** as quebras aparecem no relatório como "permitida (major nova)" e a saída é 0
-- **`schema-check` sem histórico de tags na CI (clone raso):** `latest` não acha tag; a mensagem lembra `fetch-depth: 0`. Para não passar em silêncio quando o manifesto já tem versão maior que a inicial, a saída é 3 (`baseline_unreachable`) se `git rev-parse --is-shallow-repository` for verdadeiro (hipótese)
+- **`schema-check` sem histórico de tags na CI (clone raso):** `latest` não acha tag; a mensagem lembra `fetch-depth: 0`. Para não passar em silêncio, a saída é 3 (`baseline_unreachable`) só quando o clone é raso (`git rev-parse --is-shallow-repository` verdadeiro) e não há nenhuma tag `<prefixo>v*`; clone raso que já traz alguma tag segue a regra normal (confirmado). Clone completo sem tag dá saída 0
 - **Golden desatualizado:** saída 4 (`golden_stale`) com o caminho do golden e o comando `make schema` (que roda `--update-golden`)
 - **Metade nova numa versão:** `half_added` (informação); metade retirada: `half_removed` (quebra na mesma linha)
 
@@ -204,13 +221,15 @@ flowchart LR
 
   <id>                     ID do plugin, <namespace>.<nome> (FDD 01); obrigatório
   --halves proxy,controller  metades; padrão proxy,controller
+  --no-proto               com as duas metades, omite proto/, buf.* , tools/ e a tarefa report
   --module <caminho>       módulo Go; padrão github.com/<namespace>/n3x-plugin-<nome, _ vira ->
+                           (namespace n3x: github.com/giustech/n3x-plugin-<nome>)
   --dir <pasta>            destino; padrão o último elemento do módulo; não pode ter conteúdo
   --type-name <Nome>       tipo Go das metades e serviço gRPC; padrão PascalName(<nome>)
   --version <semver>       version inicial do manifesto, sem v; padrão 0.1.0
   --phase <fase>           fase única permitida e padrão; padrão transform (a do molde)
   --ci github|none         gera .github/workflows/ci.yml; padrão github
-  --license none|apache-2.0  copia o LICENSE do molde; padrão none
+  --license apache-2.0|none  copia o LICENSE Apache 2.0 do molde e põe a atribuição no README; padrão apache-2.0; none desliga
   --template-dir <pasta>   molde local em vez do módulo baixado (CI do SDK, sem rede)
   --dev-sdk <pasta>        grava go.work com use . e use <pasta> (só desenvolvimento do SDK)
   --no-generate            não compila as ferramentas nem roda buf generate
@@ -219,14 +238,14 @@ flowchart LR
   ```
 - Método: processo local; lê do proxy de módulos Go e escreve no sistema de arquivos
 - Semântica:
-  - **Versão do molde:** sempre a versão da própria ferramenta. `go run .../cmd/n3x-new@v1.2.0` usa `example@v1.2.0`; `@v1` resolve a maior `v1.x.y` (depois da `v1.0.0`; na série `0.x`, use `@latest` ou a tag exata, I-04). Não existe flag para misturar versões, porque o `go.mod` do molde fixa o SDK que o plugin vai exigir
+  - **Versão do molde:** sempre a versão da própria ferramenta. `go run .../cmd/n3x-new@v1.2.0` usa `example@v1.2.0`; `@v1` resolve a maior `v1.x.y` (depois da `v1.0.0`; na série `0.x`, `@v0` pode atravessar minors, que quebram entre si, então prefira a tag exata). Não existe flag para misturar versões, porque o `go.mod` do molde fixa o SDK que o plugin vai exigir
   - **Ordem de validação:** argumentos, molde, montagem, escrita, passos externos. Os quatro primeiros não deixam nada no destino quando falham
   - **ID recusado além do `ParseID`:** `n3x.core` (`core_id`); namespaces `plugin`, `controller`, `sidecar`, `build` e `config` (`reserved_metric_namespace`, FDD 06)
   - **`--version` e o `add`:** o `n3x-plugin add` exige a tag igual a `version` (FDD 19); a primeira tag do repositório gerado é `v0.1.0` por padrão
   - **`--phase`:** gera `phases: [<fase>]`, `default_phase: <fase>`; `default_order: 50` e `default_failure: open` vêm do molde. O código do molde não depende da fase (o hook só lê path e escreve header)
   - **Passos externos:** usam o `go` do `PATH`, herdam `GOPROXY`, `GOPRIVATE`, `GOFLAGS` e `GOMODCACHE` do autor e fixam `GOTOOLCHAIN=local`; a saída de cada passo só aparece em falha, cortada em 64 KiB
   - **Saída:** stdout com uma linha por arquivo criado, em ordem de caminho, e um bloco final; stderr só para avisos e erros
-  - **Limites:** molde com até 500 arquivos, 1 MiB por arquivo e 4 MiB no total; extensões aceitas `.go`, `.proto`, `.yaml`, `.yml`, `.json`, `.txt`, `.md`, `.mod`, `.sum`, `Makefile` e `LICENSE`; qualquer outra é `template_file_type` (hipótese de limites)
+  - **Limites:** molde com até 500 arquivos, 1 MiB por arquivo e 4 MiB no total; extensões aceitas `.go`, `.proto`, `.yaml`, `.yml`, `.json`, `.txt`, `.md`, `.mod`, `.sum`, `Makefile` e `LICENSE`; qualquer outra é `template_file_type` (confirmado)
 
 **Exemplo de requisição**
 ```bash
@@ -296,6 +315,7 @@ Os nomes de arquivo de `agent/`, `controller/` e `types/` acima são ilustrativo
   const (
       CondProxy      Cond = 1 << iota // metade de proxy presente
       CondController                  // metade de controller presente
+      CondNoProto                     // --no-proto: sem proto/ nem tarefa report
       CondBoth       = CondProxy | CondController
   )
 
@@ -304,6 +324,7 @@ Os nomes de arquivo de `agent/`, `controller/` e `types/` acima são ilustrativo
       Module   string
       TypeName string
       Halves   []plugin.Half
+      NoProto  bool // só com as duas metades
   }
 
   type Form struct {
@@ -341,27 +362,27 @@ Os nomes de arquivo de `agent/`, `controller/` e `types/` acima são ilustrativo
 | `type_name` | `Example` | `RateLimit` | qualquer ocorrência (inclusive `ExampleClient`, `RegisterExampleServer`) |
 | `word` | `example` | `rate_limit` | palavra inteira (`_` e `.` contam como fronteira: `example.proto`, `example_grpc.pb.go`, `example:`) |
 
-- **Fonte única com o inventário:** `Inventory` é a tabela do contrato 12 da FDD 13 mais as duas palavras de domínio (`type_name` e `word`). `Scan` usa a mesma tabela para dizer o que está fora dela, e o `TestInventarioDoID` do exemplo passa a chamar `scaffold.Scan` (pedido à FDD 13). O exemplo pode importar o pacote porque o caminho dele (`github.com/giustech/n3x-sdk/example`) fica dentro da árvore de `github.com/giustech/n3x-sdk/`, que a regra de `internal` do Go permite (hipótese; contingência: pacote público `scaffold`)
-- **Por que texto e não AST:** as formas aparecem em Go, `.proto`, YAML, JSON, `Makefile`, strings e comentários. A troca por texto é exata porque o molde garante, por teste, que toda ocorrência é uma forma da tabela; a AST só cobriria o Go. Depois da troca, todo `.go` é analisado e formatado com `go/format`, e o gerador procura resto de `example` sem diferenciar maiúsculas (`template_residue`)
+- **Fonte única com o inventário:** `Inventory` é a tabela do contrato 12 da FDD 13 mais as duas palavras de domínio (`type_name` e `word`). `Scan` usa a mesma tabela para dizer o que está fora dela, e o `TestInventarioDoID` do exemplo passa a chamar `scaffold.Scan` (pedido à FDD 13). O exemplo pode importar o pacote porque o caminho dele (`github.com/giustech/n3x-sdk/example`) fica dentro da árvore de `github.com/giustech/n3x-sdk/`, que a regra de `internal` do Go permite (confirmado)
+- **Por que texto e não AST:** as formas aparecem em Go, `.proto`, YAML, JSON, `Makefile`, strings e comentários. A troca por texto é exata porque o molde garante, por teste, que toda ocorrência é uma forma da tabela; a AST só cobriria o Go. Depois da troca, todo `.go` é analisado e formatado com `go/format`, e o gerador procura resto de `example` sem diferenciar maiúsculas (`template_residue`), ignorando as ocorrências que fazem parte do ID, do módulo ou do nome do tipo novos quando estes contêm "example"
 - **Stubs gerados:** `*.pb.go` e `*_grpc.pb.go` do molde nunca são copiados nem transformados: o descritor embutido neles tem tamanhos codificados que a troca de texto corromperia. O gerador escreve o `.proto` transformado e roda `buf generate` (contrato 1, passo 6)
-- **Nome do tipo (P-03 da FDD 13 fechado):** o tipo `Example` das duas metades e o serviço gRPC `Example` viram `PascalName(id)`, ou o valor de `--type-name`. `PascalName` divide o nome por `_` e põe a primeira letra de cada parte em maiúscula. Colisão com identificador de topo dos pacotes do molde (por exemplo `giustech.config` daria `Config`, que já existe em `controller/`) ou com nome de mensagem do `.proto` é `type_name_conflict`, com a sugestão `--type-name ConfigPlugin` (hipótese)
+- **Nome do tipo (P-03 da FDD 13 fechado):** o tipo `Example` das duas metades e o serviço gRPC `Example` viram `PascalName(id)`, ou o valor de `--type-name`. `PascalName` divide o nome por `_` e põe a primeira letra de cada parte em maiúscula. Colisão com identificador de topo dos pacotes do molde (por exemplo `giustech.config` daria `Config`, que já existe em `controller/`) ou com nome de mensagem do `.proto` é `type_name_conflict`, com a sugestão `--type-name ConfigPlugin` (confirmado)
 - **Regras de pasta por metade** (fixas no pacote, não no molde):
 
 | Caminho no molde | Condição para existir no gerado |
 | --- | --- |
 | `agent/`, `testdata/cases.json`, `testdata/n3x/sidecar-plugins.yaml`, `types/testdata/schema/proxy.json` | `CondProxy` |
 | `controller/`, `testdata/n3x/controller-plugins.yaml`, `types/testdata/schema/controller.json` | `CondController` |
-| `proto/` (sem os stubs), `buf.yaml`, `buf.gen.yaml`, `tools/` | `CondBoth` |
+| `proto/` (sem os stubs), `buf.yaml`, `buf.gen.yaml`, `tools/` | `CondBoth` e não `CondNoProto` |
 | `README.md`, `internal/repotest/inventory_test.go`, stubs `*.pb.go` | nunca (o `README.md` é do gerador) |
-| `LICENSE` | só com `--license apache-2.0`; copiado byte a byte, fora da troca, do `Scan` e da conferência de resto (o texto da Apache 2.0 tem a palavra "example") |
+| `LICENSE` | por padrão (`--license apache-2.0`); não existe com `--license none`; copiado byte a byte, fora da troca, do `Scan` e da conferência de resto (o texto da Apache 2.0 tem a palavra "example") |
 | demais arquivos | sempre |
 
 - **Marcadores** (pedido à FDD 13): linhas inteiras, sem espaço depois de `//` ou `#`, removidas da saída em todos os casos:
-  - região: `//n3x-new:if <cond>` até `//n3x-new:end` em `.go` e `.proto`; `#n3x-new:if <cond>` até `#n3x-new:end` em `Makefile` e YAML; `<cond>` é `proxy`, `controller` ou `proxy+controller`; sem aninhamento
+  - região: `//n3x-new:if <cond>` até `//n3x-new:end` em `.go` e `.proto`; `#n3x-new:if <cond>` até `#n3x-new:end` em `Makefile` e YAML; `<cond>` é `proxy`, `controller`, `proxy+controller` ou `noproto`; `proxy+controller` vale só com as duas metades e com `proto/` (sem `--no-proto`), e é a condição da tarefa `report`, dos imports dos stubs e dos testes do `Report`; `noproto` vale só com as duas metades e `--no-proto`, para o que substitui esse código (se algo for preciso); sem aninhamento
   - arquivo: `//n3x-new:file <cond>` ou `#n3x-new:file <cond>` na primeira linha; o arquivo só existe se a condição vale
   - JSON não tem marcador; os arquivos JSON seguem só as regras de pasta
   - marcador desbalanceado, aninhado, com condição desconhecida ou fora do tipo de arquivo é `template_marker`
-- **Arquivos do gerador** (`extra`): `README.md`, `.gitignore` e `.github/workflows/ci.yml` são modelos embutidos em `cmd/n3x-new` com `go:embed`, porque o exemplo vive dentro do repositório do SDK e não tem CI própria. O `go:embed` não pode copiar o `example/`, que é outro módulo (I-03)
+- **Arquivos do gerador** (`extra`): `README.md`, `.gitignore` e `.github/workflows/ci.yml` são modelos embutidos em `cmd/n3x-new` com `go:embed`, porque o exemplo vive dentro do repositório do SDK e não tem CI própria. O `go:embed` não pode copiar o `example/`, que é outro módulo, porque ele não alcança arquivos de fora da pasta do pacote nem atravessa a fronteira de um `go.mod` aninhado
 
 **Exemplo de requisição** (trecho do molde `agent/agent.go`, já com os marcadores pedidos)
 ```go
@@ -416,7 +437,7 @@ A região de import condicional fica num grupo próprio, separado por linha em b
   ├── Makefile                                 do molde (contrato 9)
   ├── README.md, .gitignore                    do gerador
   ├── .github/workflows/ci.yml                 do gerador (--ci github)
-  ├── LICENSE                                  só com --license apache-2.0
+  ├── LICENSE                                  Apache 2.0 do molde, salvo com --license none
   ├── buf.yaml, buf.gen.yaml                   do molde
   ├── agent/                                   metade de proxy (com a tarefa report)
   ├── controller/                              metade de controller (Report, páginas, cartão, ação)
@@ -428,6 +449,7 @@ A região de import condicional fica num grupo próprio, separado por linha em b
 
   --halves proxy       sem controller/, proto/, buf.*, tools/, controller.json, controller-plugins.yaml
   --halves controller  sem agent/, proto/, buf.*, tools/, proxy.json, cases.json, sidecar-plugins.yaml
+  --no-proto           (duas metades) sem proto/, buf.*, tools/ e sem a tarefa report
   ```
   ```yaml
   # n3x-plugin.yaml gerado (--halves proxy,controller --phase traffic; SDK do molde v1.2.0)
@@ -441,14 +463,14 @@ A região de import condicional fica num grupo próprio, separado por linha em b
 - Método: n/a
 - Semântica:
   - **Faixa `sdk` (pedido da FDD 20):** o limite inferior é a versão do SDK exigida pelo `go.mod` do molde, sem o `v`. Superior: na série estável, a próxima major (`<2.0.0`); na série `0.x`, a próxima minor (`>=0.3.1 <0.4.0`), porque a faixa não atravessa minor na série 0 (FDD 01). Faixa e `go.mod` iguais por construção; o `repotest` copiado do molde mantém os dois iguais depois
-  - **`go.mod`:** só a linha `module` muda; a diretiva `go` e os `require` vêm do molde; o `go mod tidy -go=<diretiva>` com `GOTOOLCHAIN=local` não sobe a diretiva nem acrescenta `toolchain` (uma linha `toolchain` que aparecer é retirada, hipótese). Assim a diretiva `go` nunca passa da imagem do builder (`N3X-B016`, FDD 20)
+  - **`go.mod`:** só a linha `module` muda; a diretiva `go` e os `require` vêm do molde; o `go mod tidy -go=<diretiva>` com `GOTOOLCHAIN=local` não sobe a diretiva nem acrescenta `toolchain` (uma linha `toolchain` que aparecer é retirada, confirmado). Assim a diretiva `go` nunca passa da imagem do builder (erro `N3X-B016` da FDD 20; o código não está na faixa B001 a B014 do PRD, ver pendências da seção 1)
   - **`go.sum`:** copiado do molde e ajustado pelo `go mod tidy`; plugin só de controller ou só de proxy perde as entradas que não usa
   - **Testes copiados:** os testes do molde passam a valer para o plugin gerado, com o ID trocado: `sdktest` na metade de proxy (FDD 07) e `ctrltest.NewHost`, `Link` e o cartão `negacoes` na de controller (FDD 12). O plugin gerado faz o mesmo que o exemplo (header, `deny_path`, relatório absoluto, cartão e páginas) até o autor trocar o comportamento
-  - **`testdata/`:** `cases.json` e os fragmentos de `n3x.yaml` são mantidos com o ID trocado, porque descrevem o comportamento copiado e alimentam o `TestCasos`; a FDD 13 previa trocá-los por uma "versão mínima", e a mínima que mantém os testes verdes é a própria cópia filtrada pelas metades (I-06)
+  - **`testdata/`:** `cases.json` e os fragmentos de `n3x.yaml` são mantidos com o ID trocado, porque descrevem o comportamento copiado e alimentam o `TestCasos`; a FDD 13 previa trocá-los por uma "versão mínima", e a mínima que mantém os testes verdes é a própria cópia filtrada pelas metades
   - **`internal/repotest/`:** fica sem o `inventory_test.go`, que é só higiene do molde; os testes de manifesto, `CheckNamespace`, pastas das metades, `version` igual à tag (variável `N3X_RELEASE_TAG`) e faixa igual ao `go.mod` continuam
-  - **`README.md` gerado** (em pt-BR): o que o plugin faz hoje, as derivações do ID, como testar (`make check`), o trecho do Dockerfile (`RUN n3x-plugin add <módulo>@v<versão>`) e os trechos de `n3x.yaml` do serviço e do controller, com caminhos na convenção da L-34 (`plugins["giustech.ratelimit"]`); no plugin só de controller, um aviso de que as páginas não têm fonte de dados
+  - **`README.md` gerado** (em pt-BR): o que o plugin faz hoje, as derivações do ID, como testar (`make check`), a atribuição ao molde (salvo com `--license none`), o trecho do Dockerfile (`RUN n3x-plugin add <módulo>@v<versão>`) e os trechos de `n3x.yaml` do serviço e do controller, com caminhos na convenção da L-34 (`plugins["giustech.ratelimit"]`); no plugin só de controller, um aviso de que as páginas não têm fonte de dados
   - **`.gitignore`:** `bin/`, `/_n3x/` e `go.work` (o `go.work` só existe com `--dev-sdk`)
-  - **Licença:** nenhum arquivo recebe cabeçalho de licença; o autor escolhe a licença. Com `--license apache-2.0`, o `LICENSE` do molde (Apache 2.0, pedido à FDD 13) é copiado (hipótese; P-02)
+  - **Licença (confirmado):** nenhum arquivo recebe cabeçalho de licença. Por padrão (`--license apache-2.0`), o `LICENSE` Apache 2.0 do molde (pedido à FDD 13) é copiado e o `README.md` gerado leva a atribuição ao molde; `--license none` desliga as duas coisas, e o autor então escolhe a licença dele
   - **Estrutura aceita pelo `add`:** manifesto na raiz, cada metade de `halves` com a pasta e pelo menos um `.go` que não é teste, nenhuma pasta de metade não declarada (FDD 19, `N3X-B002` e `N3X-B003`)
 
 **Exemplo de requisição**
@@ -481,7 +503,7 @@ proxy: { phases: [transform], default_phase: transform, default_order: 50, defau
   ```text
   n3x-new schema-check --against <tag>|latest [flags]
 
-  --against <tag>|latest   tag da linha de base (com ou sem o prefixo do módulo) ou a maior anterior; obrigatório
+  --against <tag>|latest   tag da linha de base (com ou sem o prefixo do módulo) ou a maior tag <= versão atual (a anterior se a igual é o HEAD); obrigatório
   --dir <pasta>            raiz do módulo do plugin; padrão .
   --format text|json       formato do relatório; padrão text
   --strict                 avisos (classe warn) também reprovam
@@ -495,9 +517,10 @@ proxy: { phases: [transform], default_phase: transform, default_order: 50, defau
   - **Linha de base:** o manifesto e os goldens commitados na tag, lidos com `git show`, sem rede e sem checkout. O golden é a fonte porque o `TestSchemaGolden` do molde garante, em todo commit, que ele é igual ao schema gerado da struct (FDDs 02 e 13). Só quando a tag não tem golden (plugin anterior a esta convenção) o schema da tag é gerado num `git worktree --detach` temporário, com o auxiliar do contrato 8 e prazo de 180 s, e o relatório avisa `baseline_generated`
   - **Schema atual:** gerado da struct pelo auxiliar e comparado byte a byte com o golden do diretório; é a parte "schema gerado da struct contra o golden". O relatório compara o gerado com a base
   - **Prefixo de tag:** `git rev-parse --show-prefix` da raiz do módulo; `--against v1.2.0` vale `example/v1.2.0` dentro de `example/`; tag que não casa com `<prefixo>v<semver>` é ignorada por `latest`
-  - **Linha:** compara `version` da base e a atual: mesma major (na série `0.x`, mesma minor) é a mesma linha, onde quebra reprova; major ou minor da série 0 maior é linha nova, onde quebra é permitida e só relatada (ADR-020 e ADR-021; regra da série 0 é hipótese, igual à da faixa `sdk` da FDD 01). Pré-release conta pela parte `MAJOR.MINOR.PATCH`
+  - **Escolha de `latest`:** a maior tag `<prefixo>v<semver>` menor ou igual à `version` atual do manifesto; se a tag igual aponta para o próprio HEAD (push da tag), usa a anterior. Assim, manifesto `1.2.0`, tag `v1.2.0` já publicada em outro commit e uma quebra feita depois da publicação compara contra `v1.2.0` e reprova (mesma linha); no push da própria tag `v1.2.0`, a base é a tag anterior. Pré-release só entra como base se a versão atual também for pré-release; a base não precisa ser ancestral do HEAD (confirmado)
+  - **Linha:** compara `version` da base e a atual: mesma major é a mesma linha, onde quebra reprova; major maior é linha nova, onde quebra é permitida e só relatada (ADR-020 e ADR-021). Na série `0.x` do plugin vale "mesma linha = mesma minor": a quebra de config é permitida de `0.3.x` para `0.4.0`, não dentro de `0.3.x` (confirmado; estende o texto do PRD e do ADR-020, "mesma major", para a série 0, a registrar no Workflow 3; é a mesma regra da faixa `sdk` da FDD 01). Pré-release conta pela parte `MAJOR.MINOR.PATCH`
   - **Metades:** compara as metades presentes nos dois lados; metade nova é `half_added`; metade retirada é `half_removed`
-  - **Manifesto (hipótese):** além dos schemas, compara o que o operador escreve no `n3x.yaml` do serviço: fase retirada de `proxy.phases` é quebra (`phase_removed`, uma instância com essa `phase` deixa de validar); mudança de `default_phase`, `default_order` ou `default_failure` é aviso; `controller.required` de falso para verdadeiro e `depends_on` novo são avisos
+  - **Manifesto (confirmado):** além dos schemas, compara o que o operador escreve no `n3x.yaml` do serviço: fase retirada de `proxy.phases` é quebra (`phase_removed`, uma instância com essa `phase` deixa de validar); mudança de `default_phase`, `default_order` ou `default_failure` é aviso; `controller.required` de falso para verdadeiro e `depends_on` novo são avisos
   - **Sem efeito colateral:** sem `--update-golden`, nada no módulo é alterado; a pasta `_n3x/` e o `worktree` temporário são removidos no fim, inclusive em SIGINT
 
 **Exemplo de requisição**
@@ -585,8 +608,8 @@ erro N3X-N010: a config muda de forma incompatível dentro da major 1
 | `half_added` | info | metade nova |
 | `phase_added` | info | fase nova em `proxy.phases` |
 
-  - **Endurecimento conta como quebra (hipótese):** reduzir `max`, aumentar `min`, introduzir ou reduzir `enum` pode invalidar um `n3x.yaml` que validava, que é exatamente o que o ADR-020 quer evitar ("o operador atualiza a imagem sem precisar mudar o `n3x.yaml`")
-  - **Mudar o default é aviso (hipótese):** o `n3x.yaml` continua válido; muda só o valor efetivo de quem omitiu o campo. `--strict` transforma o aviso em reprovação
+  - **Endurecimento conta como quebra (confirmado):** reduzir `max`, aumentar `min`, introduzir ou reduzir `enum` pode invalidar um `n3x.yaml` que validava, que é exatamente o que o ADR-020 quer evitar ("o operador atualiza a imagem sem precisar mudar o `n3x.yaml`")
+  - **Mudar o default é aviso (confirmado):** o `n3x.yaml` continua válido; muda só o valor efetivo de quem omitiu o campo. `--strict` transforma o aviso em reprovação
   - **Mudança de inteiro de 8 para 64 bits** aparece como `min_lowered` e `max_raised` (os limites do tipo vão no schema, FDD 02) e passa; de `int64` para `uint64` aparece como `min_raised` e reprova
 
 **Exemplo de requisição**
@@ -638,7 +661,7 @@ n3x-new schema-check --against latest --format json
 
 **Contrato 7: códigos de erro e de saída**
 - Tipo: sdk (catálogo da CLI)
-- Assinatura/Rota: tabela abaixo; catálogo em `cmd/n3x-new/errors.go` e documento `docs/n3x-new-erros.md` gerado dele por `go generate` (hipótese, no espírito do `docs/erros.md` do builder, FDD 20)
+- Assinatura/Rota: tabela abaixo; catálogo em `cmd/n3x-new/errors.go` e documento `docs/n3x-new-erros.md` gerado dele por `go generate` (confirmado, no espírito do `docs/erros.md` do builder, FDD 20); a família `N3X-N` ainda precisa ser registrada no PRD/HLD (pendências da seção 1)
 - Método: n/a
 - Semântica:
 
@@ -768,7 +791,7 @@ resultado: compatível (0 quebras, 0 avisos, 1 informação)
   - **Dois passos de teste:** com `-race` e sem `-race` (pedido da FDD 07)
   - **Tag igual a `version` (pedido da FDD 19):** no push de tag, o `repotest` recebe a tag em `N3X_RELEASE_TAG` e reprova se ela não for `v<version>`; sem a variável, o teste é pulado
   - **SDK igual ao limite inferior (pedido da FDD 20):** conferido pelo `repotest` em todo PR
-  - **Ações fixadas por versão maior** (`actions/checkout@v4`, `actions/setup-go@v5`); fixar por SHA fica para o autor (hipótese)
+  - **Ações fixadas por versão maior** (`actions/checkout@v4`, `actions/setup-go@v5`); fixar por SHA fica para o autor (confirmado)
   - `--ci none` não gera o workflow; o `Makefile` continua com os mesmos alvos
 
 **Exemplo de requisição**
@@ -792,17 +815,17 @@ resultado: sem base
 | Condição | Tratamento | Observações |
 | --- | --- | --- |
 | ID inválido, namespace reservado, `n3x.core`, módulo fora de `github.com/giustech/` no namespace `n3x` | `N3X-N001`, saída 2, todos os problemas de entrada juntos | nada é baixado nem escrito |
-| Destino com conteúdo, arquivo no lugar do diretório, sem permissão | `N3X-N002`, saída 3 | nunca sobrescreve; não há `--force` (hipótese) |
+| Destino com conteúdo, arquivo no lugar do diretório, sem permissão | `N3X-N002`, saída 3 | nunca sobrescreve; não há `--force` (confirmado) |
 | Ferramenta `(devel)` sem `--template-dir` | uso, saída 1 | caso do `go run ./cmd/n3x-new` no próprio SDK |
 | Molde não baixa (rede, `GOPRIVATE`, versão sem tag do exemplo) | `N3X-N003` `template_download` ou `template_version`, saída 4 | mensagem com a versão tentada e a alternativa `--template-dir` |
 | Molde com forma fora do inventário, marcador ruim, resto de `example` depois da troca | `N3X-N003`, saída 4 | defeito do SDK; a CI do SDK pega antes da release |
 | Nome do tipo colide com identificador do molde | `N3X-N001` `type_name_conflict` | sugestão de `--type-name` |
 | Falha na escrita no meio | remove a pasta temporária; `N3X-N002` | o destino fica como estava |
 | `go mod tidy`, ferramentas ou `buf generate` falham ou estouram o prazo | `N3X-N004`, saída 5; a árvore fica | mensagem com o comando para terminar (`make tools generate`) |
-| `--verify` reprova | `N3X-N004` `verify_vet` ou `verify_test`, saída 5 | indica defeito do molde; a CI do SDK prova as três combinações |
+| `--verify` reprova | `N3X-N004` `verify_vet` ou `verify_test`, saída 5 | indica defeito do molde; a CI do SDK prova as quatro combinações |
 | `schema-check` fora de repositório git | `N3X-N011` `not_git_repo`, saída 3 | |
 | Tag pedida não existe | `N3X-N011` `tag_not_found`, saída 3 | lista as 5 tags mais próximas |
-| `latest` sem tag num clone raso | `N3X-N011` `baseline_unreachable`, saída 3 | lembra `fetch-depth: 0`; clone completo sem tag dá saída 0 |
+| `latest` sem nenhuma tag `<prefixo>v*` num clone raso | `N3X-N011` `baseline_unreachable`, saída 3 | lembra `fetch-depth: 0`; clone raso com alguma tag segue a regra normal; clone completo sem tag dá saída 0 |
 | Golden ausente na tag e geração da fonte falha | `N3X-N011` `baseline_generate`, saída 3 | com `--no-baseline-generate`, `baseline_schema` direto |
 | Golden atual diferente do schema da struct | `N3X-N012` `golden_stale`, saída 4 | `make schema` regrava |
 | Auxiliar não compila ou `schemagen` recusa a struct | `N3X-N012` `schema_generate`, saída 4 | stderr do auxiliar repassado |
@@ -812,7 +835,7 @@ resultado: sem base
 | SIGINT ou SIGTERM | remove temporária, `_n3x/` e `worktree`; saída 130 ou 143 | |
 
 **Estratégias de resiliência**
-- Timeouts: download do molde 120 s; `go mod tidy` 120 s; ferramentas de `tools/` 300 s; `buf generate` 60 s; `--verify` 600 s; cada chamada `git` 30 s; auxiliar do `schema-check` 120 s (configurável); geração da base pela fonte 180 s (hipóteses de prazo)
+- Timeouts: download do molde 120 s; `go mod tidy` 120 s; ferramentas de `tools/` 300 s; `buf generate` 60 s; `--verify` 600 s; cada chamada `git` 30 s; auxiliar do `schema-check` 120 s (configurável); geração da base pela fonte 180 s (prazos confirmados)
 - Retries: nenhum; o `go` já repete o download pelo próprio mecanismo, e uma falha de rede vira mensagem com o comando a repetir
 - Backoff e circuit breaker: não se aplicam a uma CLI de execução única
 
@@ -839,7 +862,7 @@ resultado: sem base
 
 **Logs**
 - Texto em pt-BR, uma linha por arquivo criado (`criado <caminho>`), uma por passo externo (`ok <passo> (<duração>)` ou o erro), uma por mudança de schema; erros no formato do contrato 7
-- Com `--format json` no `schema-check`, um único objeto (contrato 6); a criação não tem JSON (hipótese)
+- Com `--format json` no `schema-check`, um único objeto (contrato 6); a criação não tem JSON (confirmado)
 - Variável `N3X_NEW_DEBUG=1` mostra cada comando externo com a linha de comando, o diretório e a duração, sem variáveis de ambiente (que podem ter token de `GOPRIVATE`)
 - Nunca aparece: conteúdo de arquivo do autor além de caminho e linha, variável de ambiente, credencial de `git` ou do proxy de módulos
 
@@ -847,7 +870,7 @@ resultado: sem base
 - Nenhum (ADR-009 de plataforma)
 
 **Dashboards e alertas**
-- Na CI do SDK: o job `n3x-new` vermelho bloqueia o merge e a release (seção 9); o job `release-template` vermelho depois da tag do exemplo dispara issue automática "molde da versão X não publicado" (hipótese)
+- Na CI do SDK: o job `n3x-new` vermelho bloqueia o merge e a release (seção 9); o job `release-template` vermelho depois da tag do exemplo dispara issue automática "molde da versão X não publicado" (confirmado)
 - Sem painel em runtime
 
 ---
@@ -871,18 +894,18 @@ resultado: sem base
 - A árvore gerada por uma versão do `n3x-new` segue a estrutura do FR-014 da mesma major; plugin gerado numa versão antiga não precisa ser regerado para compilar com SDK mais novo da mesma major (semver do SDK, ADR-021)
 - O molde muda junto com o exemplo, que segue a versão do SDK; mudança no molde que quebre um plugin já gerado não existe, porque o plugin gerado não depende do molde depois de criado
 - Pedidos para outras FDDs (registrados no `REGISTRO-DE-DECISOES.md` pelo orquestrador):
-  - FDD 13: marcadores `//n3x-new:if` e `//n3x-new:file` nas partes que dependem das duas metades (tarefa `report`, imports dos stubs, testes do `Report`, `ControllerConfig` e constantes de cada metade); `TestInventarioDoID` em `internal/repotest/inventory_test.go` com `scaffold.Scan`; alvos `schema` e `schema-check` com `N3X_NEW` e prefixo de tag por `git rev-parse --show-prefix`, sem literal `example/`; comentário do `buf.yaml` sem o nome do tipo; `example/LICENSE`; `repotest` lendo a tag de `N3X_RELEASE_TAG`; `.gitignore` com `bin/` e `/_n3x/`
+  - FDD 13: marcadores `//n3x-new:if` e `//n3x-new:file` nas partes que dependem das duas metades (tarefa `report`, imports dos stubs, testes do `Report`, `ControllerConfig` e constantes de cada metade), inclusive a condição `noproto` da quarta combinação (`--no-proto`); `example/LICENSE` é copiado por padrão; `TestInventarioDoID` em `internal/repotest/inventory_test.go` com `scaffold.Scan`; alvos `schema` e `schema-check` com `N3X_NEW` e prefixo de tag por `git rev-parse --show-prefix`, sem literal `example/`; comentário do `buf.yaml` sem o nome do tipo; `example/LICENSE`; `repotest` lendo a tag de `N3X_RELEASE_TAG`; `.gitignore` com `bin/` e `/_n3x/`
   - FDD 36: alvos `schema` e `schema-check` iguais aos do molde no `Makefile` do core
-  - FDD 48: gerar `giustech.ratelimit` com as três combinações, passar pelo `n3x-plugin add` e pelo build nas imagens de build e conferir no painel a página e o cartão (critério do PRD)
-  - FDD 47: guia do autor com o ciclo do `n3x-new`, as flags, a tabela de regras do `schema-check`, a regra da série `0.x`, `fetch-depth: 0` e a escolha de licença
+  - FDD 48: gerar `giustech.ratelimit` com as quatro combinações (inclusive `--no-proto`), passar pelo `n3x-plugin add` e pelo build nas imagens de build e conferir no painel a página e o cartão (critério do PRD)
+  - FDD 47: guia do autor com o ciclo do `n3x-new`, as flags, a tabela de regras do `schema-check`, a regra da série `0.x` (mesma linha = mesma minor, confirmado), a escolha de `latest` (maior tag menor ou igual à versão atual), `fetch-depth: 0`, `--no-proto` e a licença (`LICENSE` Apache 2.0 por padrão, `--license none` para desligar)
 
 ---
 
 ### 9. Critérios de aceite técnicos
 
-- **Três combinações verdes (job `n3x-new` da CI do SDK, em todo PR):** `go run ./cmd/n3x-new giustech.ratelimit --module github.com/giustech/n3x-plugin-ratelimit --halves <h> --template-dir ./example --dev-sdk . --verify` para `proxy,controller`, `proxy` e `controller`; em cada saída, `go vet ./...`, `go test -race ./...`, `go test ./...` sem `-race`, `make lint` e `make generate` seguido de `git diff --exit-code` (quando há `proto/`) e `schema-check --against latest` (saída 0, `no_baseline`) passam
+- **Quatro combinações verdes (job `n3x-new` da CI do SDK, em todo PR):** `go run ./cmd/n3x-new giustech.ratelimit --module github.com/giustech/n3x-plugin-ratelimit --halves <h> --template-dir ./example --dev-sdk . --verify` para `proxy,controller`, `proxy` e `controller`, mais `proxy,controller` com `--no-proto` (sem `proto/`, `buf.*`, `tools/` nem tarefa `report`); em cada saída, `go vet ./...`, `go test -race ./...`, `go test ./...` sem `-race`, `make lint` e `make generate` seguido de `git diff --exit-code` (quando há `proto/`) passam. O job executa `git init` na saída antes do `schema-check --against latest` (o gerador não faz `git init`), de modo que o resultado é `no_baseline` com saída 0 e não `not_git_repo`
 - **Identidade:** `n3x-new n3x.example --module github.com/giustech/n3x-sdk/example --template-dir ./example` reproduz byte a byte cada arquivo copiado do molde (todos fora `README.md`, `inventory_test.go`, os arquivos do gerador e os stubs, que o `buf` regera iguais aos versionados)
-- **Sem resto:** nas três saídas com `giustech.ratelimit` e numa com `acme.rate_limit` (nome com `_`), `grep -rIi --exclude=LICENSE example` devolve 0 linhas; as formas de `GRPCPackage(1)`, `RoutePrefix()`, `MetricPrefix()`, `CardContainerID` e o nome de exportação conferem com as funções do SDK
+- **Sem resto:** nas quatro saídas com `giustech.ratelimit` e numa com `acme.rate_limit` (nome com `_`), `grep -rIi --exclude=LICENSE example` devolve 0 linhas (um ID, módulo ou nome de tipo novo que contenha "example" não conta como resto); as formas de `GRPCPackage(1)`, `RoutePrefix()`, `MetricPrefix()`, `CardContainerID` e o nome de exportação conferem com as funções do SDK
 - **Testes herdados:** a metade de proxy gerada usa `sdktest` com `AssertZeroAllocs` e `AssertHonorsCancel`; a de controller usa `ctrltest.NewHost` e `Link`; o teste do cartão do plugin gerado mostra "Negações 3" depois de 3 negações e 10 s falsos
 - **Estrutura do `add`:** a árvore gerada passa nas regras de estrutura da FDD 19 conferidas por um teste do SDK (manifesto na raiz, `DecodeManifest`, cada metade com `.go` que não é teste, nenhuma pasta de metade não declarada); o `n3x-plugin add` real roda na FDD 48
 - **Manifesto e `go.mod`:** em todas as saídas, `version` igual a `--version`, faixa `sdk` com o limite inferior igual ao `require` do SDK, diretiva `go` igual à do molde e sem linha `toolchain`
@@ -890,15 +913,16 @@ resultado: sem base
 - **Determinismo:** duas gerações seguidas em Linux e em Windows dão o mesmo SHA-256 em cada arquivo fora os stubs
 - **Validação de entrada:** cada regra do `N3X-N001` tem um caso de teste com a saída 2 e a regra certa; `n3x.metrics` com módulo de fora dá `reserved_namespace`; `giustech.config` dá `type_name_conflict`; `config.metrics` dá `reserved_metric_namespace`
 - **Molde ruim:** um molde de teste com `example.com` num comentário dá `template_inventory`; um com marcador sem `end` dá `template_marker`; nenhum dos dois escreve no destino
-- **Corpus do `schema-check`:** no mínimo 60 pares de schema (hipótese), com pelo menos um por regra do contrato 5; cada um dá exatamente a `Rule` e a `Class` esperadas; os casos de quebra do PRD (remover, renomear, tornar obrigatório) reprovam com saída 2 na mesma major e passam com saída 0 na major nova; campo novo com default passa
-- **Série 0:** de `0.3.0` para `0.3.1` com campo removido reprova; de `0.3.1` para `0.4.0` passa como `compatible_new_major`
+- **Corpus do `schema-check`:** no mínimo 60 pares de schema (confirmado), com pelo menos um por regra do contrato 5; cada um dá exatamente a `Rule` e a `Class` esperadas; os casos de quebra do PRD (remover, renomear, tornar obrigatório) reprovam com saída 2 na mesma major e passam com saída 0 na major nova; campo novo com default passa
+- **Escolha da base (`latest`):** manifesto `1.2.0` com tag `v1.2.0` em outro commit e uma quebra depois da publicação reprova (saída 2) contra `v1.2.0`; o mesmo manifesto no commit que a tag `v1.2.0` aponta (HEAD) usa a tag anterior; pré-release como base só com versão atual também pré-release
+- **Série 0 (confirmado: mesma linha = mesma minor):** de `0.3.0` para `0.3.1` com campo removido reprova; de `0.3.1` para `0.4.0` passa como `compatible_new_major`
 - **Golden:** golden alterado à mão dá `golden_stale` com saída 4; `--update-golden` regrava e segue; `--no-generate` não compila nada (sem diretório `_n3x/` criado)
-- **Linha de base:** tag com prefixo (`example/v0.1.0`) resolvida dentro de `example/`; tag sem golden gera a base no `worktree` com o aviso `baseline_generated` e remove o `worktree`; clone raso sem tag dá `baseline_unreachable`
+- **Linha de base:** tag com prefixo (`example/v0.1.0`) resolvida dentro de `example/`; tag sem golden gera a base no `worktree` com o aviso `baseline_generated` e remove o `worktree`; clone raso sem nenhuma tag dá `baseline_unreachable`
 - **Exemplo e core:** `make -C example schema-check N3X_NEW='go -C .. run ./cmd/n3x-new'` roda em todo PR do SDK; a CI do core roda `make schema-check` (FDD 36)
-- **Desempenho (hipótese, runner da CI com cache quente):** montagem e escrita em até 2 s; geração completa em até 90 s; `schema-check` com auxiliar em até 20 s
+- **Desempenho (confirmado, runner da CI com cache quente):** montagem e escrita em até 2 s; geração completa em até 90 s; `schema-check` com auxiliar em até 20 s
 - **Dependências:** `go list -deps ./cmd/n3x-new` só lista a biblioteca padrão e pacotes `github.com/giustech/n3x-sdk/...`; o `go.mod` do SDK não ganha `require` por causa desta FDD
 - **Release:** depois da tag `example/vX.Y.Z`, o job `release-template` roda `go run github.com/giustech/n3x-sdk/cmd/n3x-new@vX.Y.Z giustech.ratelimit --dir $(mktemp -d)/p` com `GOWORK=off` e `GOFLAGS=-mod=mod`, e a geração passa
-- **Cobertura:** no mínimo 85% de linhas em `internal/scaffold`, `internal/schemadiff` e `cmd/n3x-new` (hipótese); fuzzing de `scaffold.Render` sobre o molde com IDs aleatórios válidos e de `schemadiff.Compare` com pares de schemas gerados, 5 minutos por alvo na CI noturna, sem panic (hipótese de duração, igual às FDDs anteriores)
+- **Cobertura:** no mínimo 85% de linhas em `internal/scaffold`, `internal/schemadiff` e `cmd/n3x-new` (confirmado); fuzzing de `scaffold.Render` sobre o molde com IDs aleatórios válidos e de `schemadiff.Compare` com pares de schemas gerados, 5 minutos por alvo na CI noturna, sem panic (duração confirmada, igual às FDDs anteriores)
 
 ---
 
@@ -911,7 +935,7 @@ resultado: sem base
 - **Mitigação:**
     - o molde é o próprio módulo do exemplo, baixado na versão da ferramenta; não existe cópia para divergir
     - inventário e gerador usam a mesma tabela (`internal/scaffold`)
-    - CI do SDK gera as três combinações e o teste de identidade em todo PR; job de release confere a tag publicada
+    - CI do SDK gera as quatro combinações e o teste de identidade em todo PR; job de release confere a tag publicada
 - **Plano de contingência:** publicar patch do SDK e do exemplo juntos; o autor regera com a versão nova (`@vX.Y.Z+1`)
 
 ### Falso negativo no `schema-check` quebra o `n3x.yaml` do operador
@@ -932,7 +956,7 @@ resultado: sem base
 - **Mitigação:**
     - o molde não pode ter `example` fora da tabela (`TestInventarioDoID` com `scaffold.Scan`), e o gerador repete a conferência antes de trocar
     - fronteiras por forma e uma passada só, da mais longa para a mais curta
-    - stubs nunca trocados por texto; `go/format` e compilação nas três combinações
+    - stubs nunca trocados por texto; `go/format` e compilação nas quatro combinações
 - **Plano de contingência:** trocar a forma problemática no molde por uma do inventário e publicar patch
 
 ### Janela entre a tag do SDK e a tag do exemplo
@@ -960,14 +984,14 @@ resultado: sem base
 - **Impacto:** o exemplo fica menos legível como referência; uma edição esquece um `end`
 - **Mitigação:**
     - marcadores só onde as metades se cruzam (tarefa `report`, imports e testes do `Report`), poucos por arquivo
-    - `template_marker` no gerador e nas três combinações da CI do SDK
+    - `template_marker` no gerador e nas quatro combinações da CI do SDK
 - **Plano de contingência:** mover o código que cruza as metades para arquivos próprios com o marcador de arquivo, eliminando as regiões
 
 ### Licença do molde copiada para plugins de terceiros
 
 - **Probabilidade:** baixa
-- **Impacto:** dúvida jurídica sobre a obrigação de manter os avisos da Apache 2.0 em código derivado do exemplo
+- **Impacto:** o autor de um plugin derivado do exemplo pode não querer a Apache 2.0 no repositório dele, ou ignorar a obrigação de manter os avisos em código derivado
 - **Mitigação:**
-    - nenhum cabeçalho de licença nos arquivos gerados; `LICENSE` só com `--license apache-2.0`
-    - ponto aberto P-02 para o mantenedor declarar no README do SDK a permissão de uso do molde sem atribuição
-- **Plano de contingência:** se a permissão não puder ser dada, o gerador passa a escrever o aviso de atribuição no `README.md` gerado
+    - decisão confirmada (antes P-02): o `LICENSE` Apache 2.0 do molde é copiado por padrão e o `README.md` gerado leva a atribuição, o que cumpre a obrigação de manter os avisos; nenhum cabeçalho de licença nos arquivos gerados
+    - `--license none` desliga o `LICENSE` e a atribuição para quem escolher outra licença, e o guia (FDD 47) explica a escolha
+- **Plano de contingência:** nenhum necessário; se o mantenedor mudar a licença do exemplo, o `LICENSE` copiado muda junto com o molde

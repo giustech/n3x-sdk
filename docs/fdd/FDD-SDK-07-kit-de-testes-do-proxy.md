@@ -69,6 +69,15 @@ Consumidores:
   - **L-12 aplicada:** da família `n3x_controller_*`, o kit simula só `n3x_controller_logins_total` e `n3x_controller_session_age_seconds`, a partir do `SessionReporter` do falso de `Sidecar` (FDD 09); as de conexão e buffer são da FDD 38
   - **L-10 aplicada (fechada na FDD 09):** uma instância da metade de proxy do core, `proxy.CoreInstance` (`core`), com config `{}`, criada antes das demais; só o core tem metade só de fundo (contrato 12)
   - **L-01 aplicada (fechada na FDD 09):** falsos de `proxy.CoreEnv` e `proxy.Sidecar`, com a `proxy.EventQueue` real do SDK (contrato 12)
+
+**Decisões aprovadas na clarificação**
+- A lógica pura da cadeia fica no pacote público `chain/` do SDK, importado pelo kit e pelo executor do sidecar (L-50). Os pacotes `chain/` e `sdktest/conformance` precisam constar na árvore de pacotes do HLD e no ADR-011; o `chain/` é marcado como pacote de plataforma, fora do alcance de plugins (FDD 24)
+- Grupo paralelo confirmado: na parte síncrona, em ordem alfabética de `instance`, quando uma instância nega ou falha com `closed` as seguintes do grupo não são chamadas (mas recebem `OnComplete`); quando uma função do `Go()` nega ou falha com `closed`, o `ctx` das posteriores em ordem alfabética é cancelado e vence a negação da primeira em ordem alfabética. O ADR-005 do `n3x-sidecar` e a FDD 17 devem refletir essa interpretação
+- As demais hipóteses (tempos e janelas do agendador, padrão `FREED` de sobrescrita, origem do core por `debug.ReadBuildInfo`, `plugin_without_hooks` reprovando só no kit, valores de repetição de teste e cobertura) ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Dependem de outros repositórios: uso de `chain` pelo executor (FDD 17), harness de conformidade no sidecar (FDDs 16, 17, 18 e 38), manifesto embutido (FDD 22) e catálogo de alvos (FDD 19). O host falso de controller e o `bufconn` são da FDD 12, deste repositório
+- Divergência a tratar no Workflow 3: `plugin_without_hooks` é aviso no executor e reprova o teste no kit
 - Pedidos de FDDs anteriores atendidos: FDD 02 (o kit falha se `SchemaOf[C]` falhar), FDD 03 (canário `n3x-canary-` via `plugin.NewSecret`), FDD 04 (`Runtime` real com relógio falso e `Sweep` determinístico), FDD 05 (`Stream` com `StreamActions` e as validações do SDK, panic `ErrStreamClosed`, sobrescrita dos buffers depois do hook, suíte de conformidade do `Stream`), FDD 06 (`Env` falso com as mesmas regras, `internal/clock`, suíte de conformidade do `Env`, falha em uso indevido de métrica; e, no ajuste pós-FDD 26, a `DialDenyList` como opção do kit), FDD 09 (ajuste pós-FDD 09: recusa de hook na metade só de fundo com `background_only_hooks`, instância única `core` com config `{}`, falsos de `proxy.CoreEnv` e `proxy.Sidecar` com a `proxy.EventQueue` real, origem por `debug.ReadBuildInfo` com `proxy.CheckPrivileged` e opção que simula a origem oficial, suíte `RunCore`)
 
 ---

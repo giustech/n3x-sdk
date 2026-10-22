@@ -1,6 +1,6 @@
 # ADR-012: ID do plugin no formato `<namespace>.<nome>`
 
-Status: Aceito
+Status: Aceito (atualizado em 2026-10-22)
 Data: 2026-10-19
 
 ## Contexto
@@ -32,3 +32,9 @@ O ID do plugin aparece no `n3x.yaml` do serviço, no `n3x.yaml` do controller, n
 
 ## Requisitos relacionados
 FR-004, FR-005, FR-011, FR-012, FR-013, FR-015 e FR-016.
+
+## Atualização (2026-10-22)
+Alinhamento com a clarificação das FDDs SDK-01 a SDK-16. O corpo acima foi mantido; o que mudou:
+- Cada parte do ID casa com `^[a-z][a-z0-9_]{1,31}$` (começa com letra, 2 a 32 caracteres); isso substitui a descrição "letras, números e `_`".
+- Namespaces reservados: `n3x` (só módulos `github.com/giustech/`), `plugin`, `controller`, `sidecar`, `build` e `config` (famílias de métricas da plataforma).
+- O `<major>` do pacote gRPC é independente da versão do plugin.

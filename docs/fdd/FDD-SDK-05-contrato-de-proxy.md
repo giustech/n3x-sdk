@@ -61,6 +61,16 @@ Sem essas regras, o executor (FDD 17), o adaptador (FDD 16) e o kit de testes (F
   - **L-46 aplicada:** `Plugin.Instantiate` recebe a config em bytes JSON (FDD 02)
   - **L-13 aplicada em parte:** `s.RequestID()` devolve o valor do header `x-request-id`; os nomes do campo de log e do metadado gRPC são da FDD 06
 
+**Decisões aprovadas na clarificação**
+- `SetRoute` existe só em `RouteStream`, obtido por type assertion em hooks de request das fases `access`, `authn` e `route`. O HLD do `n3x-sdk` e o PRD (FR-012), que mostram `s.SetRoute` direto no `Stream`, precisam ser ajustados
+- O hook de body de request recebe o body inteiro numa chamada, somente leitura, com limite padrão de 1 MiB (`DefaultMaxRequestBody`); acima do limite, `closed` nega com `PayloadTooLarge` e `open` não chama o hook. Body por pedaços fica como adição futura
+- O corpo de uma negação em HTTP é JSON, `{"code":<status HTTP>,"message":"<mensagem>"}` com `content-type: application/json; charset=utf-8`, e não `text/plain` como a FDD propunha. A negação gRPC continua trailers-only
+- As demais hipóteses (headers protegidos, modelo de erro por marcação, limites de 16 mudanças e 8 headers extras, tabela `CodeForStatus`, duas capacidades opcionais `request_body` e `route_change`, rótulos de métrica `hook` e `code`, nomes de logs) ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- A assinatura de uma função auxiliar de escape JSON no SDK (hoje só `AppendGRPCMessage` existe) e o impacto da serialização JSON na meta de 0 alocações da negação precisam ser definidos junto com o adaptador (FDD 16). Os exemplos e critérios desta FDD que citam o corpo `text/plain` foram atualizados; critérios de teste do corpo da negação devem conferir o JSON
+- Dependem de outros repositórios: executor, grupos e aplicação das mudanças (FDD 17), política de falha e prazo do `Go()` (FDD 18), adaptador, renderização da negação e recálculo de rota (FDD 16), valores de capacidade por alvo (FDDs 16, 19 e 49), análise estática (FDD 24), `proxy.Env` completo (FDD 06) e kit de testes (FDD 07)
+
 ---
 
 ### 2. Objetivos técnicos
@@ -155,7 +165,7 @@ Sem essas regras, o executor (FDD 17), o adaptador (FDD 16) e o kit de testes (F
 Config de referência (core sem hooks e exemplo só com `OnRequestHeaders`): cruzamentos 1, 4 e 5. O contrato não cria cruzamento por plugin; mais de um grupo com `Go()` ou body em vários pedaços passam de 5 (inconsistência I-04).
 
 **Fluxos alternativos e exceções**
-- **Negação em HTTP:** o executor pega `resp.Effective()` e o adaptador escreve `:status`, `content-type: text/plain; charset=utf-8`, os headers extras e a mensagem no body (contrato 5)
+- **Negação em HTTP:** o executor pega `resp.Effective()` e o adaptador escreve `:status`, `content-type: application/json; charset=utf-8`, os headers extras e o body `{"code":<status>,"message":"<mensagem>"}` (contrato 5)
 - **Negação em gRPC:** HTTP 200, `content-type: application/grpc`, `grpc-status` com o código (nunca 0), `grpc-message` codificado e headers extras, tudo em trailers-only (fim do stream nos headers)
 - **Negação inválida** (valor zero, status fora de 400 a 599, código 0 ou acima de 16): a requisição é negada com 500 ou `INTERNAL` e o executor registra `invalid_deny`; uma negação nunca vira `Continue`
 - **Negação ou falha do N3X não passa pelos hooks de response:** a resposta de negação é final; nenhum plugin altera ou desfaz uma negação. Respostas geradas pelo Envoy depois do encaminhamento (503 com a aplicação fora do ar, 504 por prazo) passam pelos hooks de response como qualquer resposta (hipótese)
@@ -360,7 +370,7 @@ func New(cfg Config, env proxy.Env) (proxy.Instance, error) {
 | `OnComplete` | Fim da requisição, uma vez, para toda instância do recorte que implementa o hook e cujo disjuntor não estava aberto no início da requisição, inclusive depois de negação, falha ou desconexão | `StreamInfo` (só leitura) | nada |
 
   - Para uma requisição e uma instância, os hooks rodam no máximo uma vez cada, nesta ordem, nunca ao mesmo tempo. Requisições diferentes rodam em paralelo
-  - O body (hipótese): a requisição inteira, acumulada até o fim do stream, numa única chamada; o slice aponta para memória da requisição e vale até o hook retornar; o plugin não o altera. Em gRPC, o body traz os quadros com o prefixo de 5 bytes de cada mensagem. O limite padrão é `DefaultMaxRequestBody` (1 MiB); o campo que o ajusta no `n3x.yaml` é da FDD 15
+  - O body (confirmado): a requisição inteira, acumulada até o fim do stream, numa única chamada; o slice aponta para memória da requisição e vale até o hook retornar; o plugin não o altera. Em gRPC, o body traz os quadros com o prefixo de 5 bytes de cada mensagem. O limite padrão é `DefaultMaxRequestBody` (1 MiB); o campo que o ajusta no `n3x.yaml` é da FDD 15
   - Hook de body bufferiza a requisição: não deve ficar em recortes com gRPC de streaming do cliente ou bidirecional, porque a requisição só termina quando o cliente fecha o envio (guia do autor; risco na seção 10)
   - O nome do hook (`Hook.String()`) é o valor do rótulo `hook` em `n3x_plugin_duration_seconds`; a função do `Go()` usa o valor `async` (seção 7)
   - `OnResponseBody` entra numa minor como `ResponseBodyHook`, por adição (ADR-015)
@@ -434,7 +444,7 @@ hooksVal := proxy.HooksOf(Obs{})   // New devolveu valor: receptores ponteiro n�
 - Semântica:
   - **`Status()`:** 0 nos hooks de request e quando não houve resposta (cliente desconectado). Em `OnResponseHeaders` e em `OnComplete` de uma resposta da aplicação ou do Envoy, é o `:status` recebido. Em `OnComplete` depois de uma negação do N3X (inclusive a produzida pela política `closed`), é o status HTTP nominal da negação efetiva (`resp.Effective().Status()`, por exemplo 403), também em gRPC, e não o `:status` 200 do fio; é o mesmo valor do rótulo `code` de `n3x_plugin_denies_total` (ajuste pós-FDDs 07 e 17, refino R9)
   - **Direção:** em `OnRequestHeaders` e `OnRequestBody`, `Headers()` é o conjunto de headers de request; em `OnResponseHeaders`, o de response. `RequestHeaders()` está em todos os hooks (no request, é a mesma visão de `Headers()`, só leitura)
-  - **`RouteStream`** (hipótese de forma, por type assertion como `http.Flusher`): o `s` entregue a hooks de request de instâncias com `Phase.CanSetRoute()` (`access`, `authn` e `route`) também implementa `RouteStream`; nos demais hooks e fases, não. O plugin usa `if rs, ok := s.(proxy.RouteStream); ok { rs.SetRoute(...) }`. Chamar `s.SetRoute` sobre `Stream` não compila. Por isso o executor usa tipos concretos diferentes para as duas visões do mesmo estado, sem alocar
+  - **`RouteStream`** (forma confirmada, por type assertion como `http.Flusher`): o `s` entregue a hooks de request de instâncias com `Phase.CanSetRoute()` (`access`, `authn` e `route`) também implementa `RouteStream`; nos demais hooks e fases, não. O plugin usa `if rs, ok := s.(proxy.RouteStream); ok { rs.SetRoute(...) }`. Chamar `s.SetRoute` sobre `Stream` não compila. Por isso o executor usa tipos concretos diferentes para as duas visões do mesmo estado, sem alocar
   - **Fase e grupo:** `s.Phase()` informa a fase da instância chamada (também em `OnComplete`). O grupo e o `order` não são expostos (hipótese): as regras de isolamento fazem o comportamento ser o mesmo com a instância sozinha ou num grupo, e expor o grupo convidaria a depender dele. A `instance` vem pelo `Env` e pelos campos fixos do log (FDD 06)
   - **Nomes de header:** comparados sem diferenciar maiúsculas (ASCII), sem alocar; `At` devolve em minúsculas. `Get(":path")` e outros pseudo-headers podem ser lidos, nunca alterados por `Headers()`
   - **gRPC:** detectado uma vez no início, pelo `content-type` original. `GRPCMethod()` é o path sem query (FR-003); `GRPCService()` é o trecho entre a primeira e a última barra
@@ -630,7 +640,7 @@ func (r *RL) OnRequestHeaders(s proxy.Stream) proxy.Action {
   - **Respostas prontas:** `Forbidden("bloqueado")` e as demais só guardam a mensagem (string constante do plugin): 0 alocações, podem ser chamadas no hook. `WithHeader` copia a lista de headers (aloca) e por isso deve ser chamada no `New`, guardando a resposta pré-montada na instância (HLD do `n3x-sdk`)
   - **Headers extras** (hipótese): até 8; passam por `CheckHeader` e `content-type` também é proibido (a negação define o próprio). Header inválido torna a resposta inválida (`Validate` devolve o erro; no uso, vira `Internal`). Casos típicos: `www-authenticate` com 401 e `retry-after` com 429 ou 503
   - **Mensagem:** texto do plugin, nunca dado vindo da requisição (guia do autor). Cortada em 1 KiB numa fronteira de UTF-8, sem alocar
-  - **Corpo da negação em HTTP** (hipótese): `content-type: text/plain; charset=utf-8` e a mensagem como body; mensagem vazia dá body vazio. Escolhido em vez de JSON porque não exige montar texto por requisição e é o formato das respostas locais do próprio Envoy; requisição `HEAD` não leva body
+  - **Corpo da negação em HTTP** (decisão aprovada, substitui a proposta `text/plain`): `content-type: application/json; charset=utf-8` e o body `{"code":<status HTTP numérico>,"message":"<mensagem>"}`, com a mensagem escapada como string JSON (RFC 8259) e mensagem vazia dando `"message":""`; o campo `code` é o status HTTP efetivo, o mesmo valor do rótulo `code` de `n3x_plugin_denies_total` e do `Status()` do `OnComplete`. Requisição `HEAD` não leva body. Em gRPC o formato no fio não muda (trailers-only)
   - **Negação em gRPC:** HTTP 200, `content-type: application/grpc`, `grpc-status` com o código em decimal, `grpc-message` com a mensagem codificada por `AppendGRPCMessage` (omitido se vazio) e os headers extras, tudo em trailers-only (fim do stream no quadro de headers). Codificação: bytes fora de 0x20 a 0x7E e o `%` viram `%XX` em hexadecimal maiúsculo
   - **Em `OnResponseHeaders`:** a negação troca a resposta da aplicação; o body da aplicação é descartado; em gRPC sai o mesmo trailers-only
   - **`CodeForStatus`** (hipótese, baseada no mapeamento canônico `google.rpc.Code` para HTTP): usado nas respostas prontas e disponível para `NewDeny(status, proxy.CodeForStatus(status), msg)`. A tabela fica congelada na major:
@@ -669,10 +679,10 @@ s.Deny(proxy.Unauthorized("não autenticado").WithHeader("www-authenticate", `Be
 **Exemplo de resposta**
 ```text
 HTTP/1.1 403 Forbidden
-content-type: text/plain; charset=utf-8
-content-length: 9
+content-type: application/json; charset=utf-8
+content-length: 34
 
-bloqueado
+{"code":403,"message":"bloqueado"}
 
 :status: 200
 content-type: application/grpc

@@ -25,7 +25,7 @@ Responsável: Guilherme Giusti
 
 **Suposições**
 - O Go 1.26 ou superior é o toolchain de todas as imagens do builder (ADR-021 do `n3x-sdk`)
-- O `n3x-plugin.yaml` cabe em poucos KiB; o limite de 64 KiB é folga de segurança contra entrada maliciosa (hipótese)
+- O `n3x-plugin.yaml` cabe em poucos KiB; o limite de 64 KiB é folga de segurança contra entrada maliciosa (confirmado)
 - O manifesto embutido no `.so` e no binário do controller guarda o `n3x-plugin.yaml` inteiro em JSON, no campo `plugins[].manifest` (HLD do `n3x-builder`)
 
 **Restrições**
@@ -39,6 +39,13 @@ Responsável: Guilherme Giusti
 - ADRs do `n3x-sdk`: ADR-011, ADR-012, ADR-013, ADR-015 e ADR-021; ADR-008 do `n3x-plugin-core` (core sem fase)
 - Lacunas do README fechadas aqui: L-10 (formato do manifesto para metade de proxy sem fase), L-34 (convenção de escrita de caminhos com ID), L-46 (onde mora a leitura de YAML), L-47 (faixa `sdk` sem biblioteca de semver) e L-48 (início das partes do ID e origem do `<major>` gRPC)
 
+**Decisões aprovadas na clarificação**
+- O pacote `yamlconv` fica no módulo do SDK (`github.com/giustech/n3x-sdk/yamlconv`) com a biblioteca `go.yaml.in/yaml/v3`, usada só nesse pacote. O HLD do `n3x-sdk` (árvore de pacotes e tecnologias) e o ADR-011 precisam acrescentar `yamlconv/` e a dependência
+- A gramática da faixa `sdk` fica restrita a `>=X.Y.Z <A.B.C`, sem `^`, `~`, `||` nem curingas
+- Valores confirmados: manifesto até 64 KiB, `order` de 0 a 1000, até 32 `depends_on`, âncora YAML até 100 usos, fuzzing de 5 minutos por alvo na CI noturna e cobertura mínima de 90% em `plugin/`
+- Os namespaces `plugin`, `controller`, `sidecar`, `build` e `config` passam a ser reservados a métricas da plataforma (decisão registrada na FDD 06): `ParseID` continua aceitando o formato, mas o registro de métricas e o build recusam IDs com esses namespaces; o ADR-012 e a regra `reserved_namespace` precisam ser atualizados
+- A fonte da verdade das FDDs é o `.md`; os `.json` equivalentes são duplicatas e serão removidos pelo responsável
+
 ---
 
 ### 2. Objetivos técnicos
@@ -49,7 +56,7 @@ Responsável: Guilherme Giusti
 - **Validação completa numa passada.** Medida: `DecodeManifest` devolve todos os problemas do manifesto de uma vez, em ordem determinística, cada um com caminho do campo, regra e texto; nunca para no primeiro.
 - **Mensagens estáveis.** Invariante: o código da regra (`Rule`) de cada problema não muda dentro da major do SDK; o texto pode melhorar em patch.
 - **Sem custo no caminho quente.** Medida: `ParsePhase`, `Phase.String`, `Phase.CanSetRoute`, `Phases`, `ResponsePhases`, `ID.String`, `ID.Namespace` e `ID.Name` com 0 alocações por operação (`testing.AllocsPerRun`).
-- **Parse seguro contra entrada hostil.** Medida: fuzzing de `ParseID`, `ParseVersion`, `ParseSDKRange` e `DecodeManifest` por no mínimo 5 minutos cada na CI noturna, sem panic e sem estouro de tempo (hipótese para a duração).
+- **Parse seguro contra entrada hostil.** Medida: fuzzing de `ParseID`, `ParseVersion`, `ParseSDKRange` e `DecodeManifest` por no mínimo 5 minutos cada na CI noturna, sem panic e sem estouro de tempo (duração confirmada).
 
 ---
 
@@ -65,7 +72,7 @@ Responsável: Guilherme Giusti
 - Representação da metade de proxy só de fundo (sem fase), caso do plugin core (L-10, parte do formato)
 - Tipo de erro `plugin.FieldError` e lista `plugin.FieldErrors`, com caminho, regra e texto, reaproveitados pela FDD 02 na validação de config
 - Convenção de escrita de caminhos de campo com chaves que contêm ponto (L-34)
-- Pacote auxiliar `yamlconv` do SDK, fora de `plugin/`, com a conversão de YAML para JSON usada por quem lê o `n3x-plugin.yaml` (L-46) (hipótese de nome e de biblioteca)
+- Pacote auxiliar `yamlconv` do SDK, fora de `plugin/`, com a conversão de YAML para JSON usada por quem lê o `n3x-plugin.yaml` (L-46) (nome e biblioteca confirmados)
 
 **Excluído**
 - Config tipada, tags e geração do JSON Schema: FDD 02 (SDK-02)
@@ -335,7 +342,7 @@ IDs recusados de referência: `Giustech.ratelimit` (maiúscula), `giustech-ratel
 - Método: n/a
 - Semântica (L-47, parser próprio só com a biblioteca padrão):
   - `version` do manifesto: semver 2.0.0 estrito, sem `v`, sem zero à esquerda
-  - Gramática aceita da faixa: exatamente `>=<versão> <<versão>`, com um espaço entre os dois comparadores. Não há `||`, `^`, `~`, curingas, `=` nem `<=` (hipótese: gramática restrita de propósito, porque toda faixa útil de SDK cabe nela)
+  - Gramática aceita da faixa: exatamente `>=<versão> <<versão>`, com um espaço entre os dois comparadores. Não há `||`, `^`, `~`, curingas, `=` nem `<=` (confirmado: gramática restrita de propósito, porque toda faixa útil de SDK cabe nela)
   - O limite superior não tem pré-release nem build
   - O limite inferior precisa ser menor que o superior
   - A faixa não pode atravessar uma major: com major inferior maior ou igual a 1, o superior é no máximo `<major+1>.0.0`; com major 0, no máximo `0.<minor+1>.0`, porque na série `v0.x` uma minor pode quebrar (ADR-021)
@@ -404,7 +411,7 @@ Faixas recusadas de referência: `^1.0.0`, `>=1.0.0`, `>=1.0.0 <3.0.0` (atravess
 - Semântica:
   - A entrada é JSON; o YAML é convertido antes pelo chamador com `yamlconv` (L-46). `plugin/` não importa biblioteca de YAML
   - A serialização com `encoding/json` é determinística e preserva a ordem declarada das listas; é ela que vai para `plugins[].manifest` no manifesto embutido
-  - `MinOrder` e `MaxOrder` valem também para o campo `order` do `n3x.yaml` do serviço (aplicado pela FDD 15) (hipótese: faixa de 0 a 1000)
+  - `MinOrder` e `MaxOrder` valem também para o campo `order` do `n3x.yaml` do serviço (aplicado pela FDD 15) (confirmado: faixa de 0 a 1000)
 
 Regras de validação, na ordem em que são conferidas:
 
@@ -508,7 +515,7 @@ proxy.default_failure: campo obrigatório quando proxy.phases não é vazio [req
 
 ---
 
-**Contrato 7: `yamlconv.ToJSON`** (pacote auxiliar do SDK, fora de `plugin/`) (hipótese de nome e de biblioteca)
+**Contrato 7: `yamlconv.ToJSON`** (pacote auxiliar do SDK, fora de `plugin/`) (nome e biblioteca confirmados)
 - Tipo: sdk (API Go)
 - Assinatura/Rota:
   ```go
@@ -518,8 +525,8 @@ proxy.default_failure: campo obrigatório quando proxy.phases não é vazio [req
   ```
 - Método: n/a
 - Semântica:
-  - Converte um único documento YAML em JSON com a biblioteca `go.yaml.in/yaml/v3` (hipótese), que segue o YAML 1.2 nos booleanos (`yes` e `no` continuam texto)
-  - Recusa: mais de um documento, chave repetida no mesmo mapa, chave que não é texto, tag explícita (`!!binary` e outras), âncora usada mais de 100 vezes (proteção contra expansão exponencial, hipótese)
+  - Converte um único documento YAML em JSON com a biblioteca `go.yaml.in/yaml/v3` (confirmada; versão exata a fixar na implementação), que segue o YAML 1.2 nos booleanos (`yes` e `no` continuam texto)
+  - Recusa: mais de um documento, chave repetida no mesmo mapa, chave que não é texto, tag explícita (`!!binary` e outras), âncora usada mais de 100 vezes (proteção contra expansão exponencial; limite confirmado)
   - Erros são tipados e citam só linha e coluna do YAML, nunca um trecho do arquivo, porque o mesmo pacote lê o `n3x.yaml`, que pode ter segredo em claro (ajuste pedido pela FDD 15)
   - Existe para que builder, `n3x-new` e, se as FDDs 02, 15 e 30 confirmarem, o sidecar e o controller convertam YAML do mesmo jeito. O pacote não é proibido aos plugins, mas não faz parte do contrato de plugin
 
@@ -623,11 +630,11 @@ controller: { required: false, depends_on: [] }
 - `DecodeManifest` aceita o manifesto do core (duas metades, `controller.required: true`, `phases: []`) com `BackgroundOnly()` verdadeiro, e o do `n3x.example`
 - `DecodeManifest` recusa `default_phase` fora de `phases` com `Path` `proxy.default_phase` e `Rule` `not_in_phases`, e devolve todos os 4 problemas do exemplo com erros da seção 5, na ordem mostrada
 - Cada uma das 16 linhas da tabela de regras tem pelo menos um caso de teste que produz exatamente aquele `Path` e aquela `Rule`
-- Fuzzing (`FuzzParseID`, `FuzzParseVersion`, `FuzzParseSDKRange`, `FuzzDecodeManifest`, `FuzzToJSON`) roda 5 minutos por alvo na CI noturna sem panic (hipótese de duração); o corpus inicial inclui os exemplos desta FDD
+- Fuzzing (`FuzzParseID`, `FuzzParseVersion`, `FuzzParseSDKRange`, `FuzzDecodeManifest`, `FuzzToJSON`) roda 5 minutos por alvo na CI noturna sem panic (duração confirmada); o corpus inicial inclui os exemplos desta FDD
 - Benchmarks com `-benchmem` mostram 0 alocações em `ParsePhase`, `Phase.String`, `Phase.CanSetRoute`, `Phases`, `ResponsePhases`, `ID.String`, `ID.Namespace` e `ID.Name`
 - `go list -deps ./plugin` só lista pacotes da biblioteca padrão; `go vet` e `go test -race ./plugin/... ./yamlconv/...` passam
 - Serialização: `json.Marshal` do mesmo `Manifest` dá os mesmos bytes em 100 execuções seguidas
-- Cobertura de linhas do pacote `plugin/` de no mínimo 90% (hipótese)
+- Cobertura de linhas do pacote `plugin/` de no mínimo 90% (confirmado)
 
 ---
 

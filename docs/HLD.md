@@ -1,8 +1,9 @@
 ### HLD: n3x-sdk (contratos de plugin, kit de testes e plugin de exemplo)
 
-Versão: 1.1
-Data: 2026-10-20
+Versão: 1.2
+Data: 2026-10-22
 Responsável: Guilherme Giusti
+Atualização 1.2 (2026-10-22): alinhado às decisões da clarificação das FDDs SDK-01 a SDK-16.
 
 ---
 
@@ -26,7 +27,7 @@ Problemas técnicos endereçados
 - O painel precisa manter visual, acessibilidade e segurança iguais em todas as telas de plugin, sem nenhum autor escrevendo HTML
 - Os documentos anteriores usavam três formatos de ID e três arquivos chamados `n3x.yaml`
 
-Base: `docs/prd/PRD-N3X.md` versão 1.5, de 2026-10-20 (atualizada com as decisões deste HLD e do HLD do `n3x-plugin-core`). Requisitos cobertos: FR-012, FR-013 e FR-014, mais os pontos de contrato de FR-004, FR-011, FR-015 e FR-016 e os requisitos não funcionais de desempenho, segurança e observabilidade no lado do plugin.
+Base: `docs/prd/PRD-N3X.md` versão 1.6, de 2026-10-22 (atualizada com as decisões deste HLD e do HLD do `n3x-plugin-core`). Requisitos cobertos: FR-012, FR-013 e FR-014, mais os pontos de contrato de FR-004, FR-011, FR-015 e FR-016 e os requisitos não funcionais de desempenho, segurança e observabilidade no lado do plugin.
 
 Dependências com outros sistemas
 - `n3x-sidecar`: implementa o contrato de proxy (executor, adaptador por alvo e conexão compartilhada) e usa `plugin/` e `secret/`
@@ -39,20 +40,31 @@ Dependências com outros sistemas
 ---
 
 ### Arquitetura geral
-O SDK é uma **biblioteca Go sem runtime próprio**, publicada por tag semver no GitHub como um único módulo (ADR-011). Ele roda dentro de dois processos que não são dele: o `libn3x.so` do sidecar (metade de proxy) e o binário do controller (metade de controller).
+O SDK é uma **biblioteca Go sem runtime próprio**, publicada por tag semver no GitHub como um módulo principal, mais módulos aninhados só para o exemplo e as ferramentas de deploy (ADR-011). Ele roda dentro de dois processos que não são dele: o `libn3x.so` do sidecar (metade de proxy) e o binário do controller (metade de controller).
 
 ```
 n3x-sdk/                          github.com/giustech/n3x-sdk
 ├── plugin/        ID, fases, políticas, manifesto, schema por tags, plugin.Secret
-├── proxy/         contrato de proxy: Define, hooks, Stream, Deny, Go, Env
-├── controller/    contrato de controller: Define, capacidades, Caller, State
-│   └── ui/        widgets e renderizador (HTML, htmx, SVG)
+├── yamlconv/      conversão YAML->JSON; única dependência de terceiros YAML do SDK (go.yaml.in/yaml/v3)
+├── schemagen/     programa auxiliar do build que gera os schemas
+├── proxy/         contrato de proxy: Define, hooks, Stream, RouteStream, Deny, Go, Env
+├── telemetry/     métricas, registro, handler de log e request_id
+├── chain/         lógica pura da cadeia; pacote de plataforma compartilhado com o executor do sidecar, fora do alcance de plugins
+├── controller/    contrato de controller (pacote ctrl): Define, capacidades, Caller, State
+│   ├── hostrules/ regras do host (namespace, rotas e capacidades privilegiadas)
+│   └── ui/        widgets e renderizador (HTML escrito direto, htmx, SVG), com uitest
 ├── memory/        mapas isolados por plugin, com cota
 ├── secret/        ENC[...] (AES-256-GCM); proibido aos plugins
+├── internal/      clock, lifecycle, privileged, scaffold, schemadiff
 ├── sdktest/       kit de testes sem Envoy e sem controller
-├── example/       plugin n3x.example, com as duas metades
+│   ├── conformance/      suítes de conformidade
+│   ├── ctrltest/         host falso de controller (NewHost) e bufconn
+│   └── hostconformance/  conformidade do host
+├── example/       plugin n3x.example, com as duas metades; MÓDULO ANINHADO github.com/giustech/n3x-sdk/example (go.mod próprio, go.work, tags example/vX.Y.Z)
 ├── cmd/n3x-new/   gerador de plugin e schema-check
 ├── deploy/        exemplos de deploy e CI cruzada (ADR-008)
+│   ├── tools/     deploytool (módulo aninhado)
+│   └── e2e/       harness n3x-e2e (módulos aninhados plugins/faults e apps/eco)
 └── docs/          HLD de plataforma, este HLD, ADRs e guia do autor
 ```
 
@@ -60,32 +72,36 @@ n3x-sdk/                          github.com/giustech/n3x-sdk
 - Sem cgo
 - Nenhum pacote importa o SDK Go do Envoy nem pacotes internos do `n3x-sidecar` ou do `n3x-controller`
 - `proxy/` e `memory/` usam só a biblioteca padrão e grpc-go
-- `proxy/` nunca importa `controller/`
+- `proxy/` pode importar `telemetry/`, `memory/` e `plugin/`, e nunca importa `controller/`
+- `controller/ui` não importa `ctrl`
+- `chain/` importa só a biblioteca padrão, `plugin/` e `proxy/`
 - O Echo não aparece no contrato: só `net/http`, `context` e widgets
 - Código de plugin não importa `secret/` (ADR-014)
 
 **Padrão de IDs** (ADR-012)
 | Onde | Regra | Exemplo |
 | --- | --- | --- |
-| ID | `<namespace>.<nome>`, minúsculas, letras, números e `_`, cada parte com 2 a 32 caracteres | `giustech.ratelimit` |
+| ID | `<namespace>.<nome>`, minúsculas, letras, números e `_`, cada parte com 2 a 32 caracteres e começando com letra | `giustech.ratelimit` |
 | `n3x.yaml` do serviço e do controller | O ID inteiro | `giustech.ratelimit` |
 | Serviço gRPC | `n3x.plugins.<namespace>.<nome>.v<major>` | `n3x.plugins.giustech.ratelimit.v1` |
 | Rotas do painel | `/plugins/<namespace>/<nome>/` | `/plugins/giustech/ratelimit/` |
 | Métricas do plugin | `n3x_<namespace>_<nome>_<métrica>` | `n3x_giustech_ratelimit_blocked_total` |
 | Rótulo `plugin` | O ID inteiro | `plugin="giustech.ratelimit"` |
 
-- Namespace `n3x` reservado aos módulos `github.com/giustech/` (`n3x.core` e `n3x.example`); o login do core é `n3x.plugins.n3x.core.v1.Login`
+- Namespace `n3x` reservado aos módulos `github.com/giustech/` (`n3x.core` e `n3x.example`); o login do core é `n3x.plugins.n3x.core.v1.Login` (serviço próprio; `Register`, `Heartbeat` e `Exit` ficam em `Core`)
+- Namespaces reservados: `n3x`, `plugin`, `controller`, `sidecar`, `build` e `config`
 - ID duplicado faz o build falhar
 
 **Fases e políticas** (contrato; o comportamento do executor está no HLD do `n3x-sidecar`)
 - Oito fases fixas, nesta ordem: `access`, `authn`, `route`, `authz`, `traffic`, `transform`, `upstream` e `observe`. Na resposta, a ordem é a inversa
-- Só as fases até `route` recebem a API de alteração de rota (`s.SetRoute`); as seguintes não a têm
+- Só as fases `access`, `authn` e `route` recebem a API de alteração de rota: `SetRoute` existe apenas em `proxy.RouteStream`, obtido por type assertion (`s.(proxy.RouteStream)`); nas fases seguintes o `Stream` não a tem
 - Políticas de falha: `open` (segue) e `closed` (503 ou `UNAVAILABLE`), com o padrão declarado no manifesto e sobrescrito por instância no `n3x.yaml`
-- Mesma fase e mesmo `order` formam um grupo paralelo (ADR-005 do `n3x-sidecar`)
+- Mesma fase e mesmo `order` formam um grupo paralelo (ADR-005 do `n3x-sidecar`): a parte síncrona roda em ordem alfabética de instância; negação ou falha `closed` impede as instâncias seguintes, e vence a primeira em ordem alfabética
 
 **Estrutura padrão de um repositório de plugin** (FR-014)
 ```
 n3x-plugin-ratelimit/                 github.com/giustech/n3x-plugin-ratelimit
+├── LICENSE           Apache 2.0, copiada por padrão (--license none desliga)
 ├── n3x-plugin.yaml   manifesto (ADR-013)
 ├── agent/            metade de proxy: Plugin(), New e hooks
 ├── controller/       metade de controller: Plugin(), New e capacidades
@@ -94,13 +110,13 @@ n3x-plugin-ratelimit/                 github.com/giustech/n3x-plugin-ratelimit
 ├── connectors/       clients do plugin (ex.: réplica Redis), quando houver
 └── Makefile          test, generate (buf) e lint
 ```
-- Plugin só de proxy ou só de controller omite a pasta da outra metade; plugin que não fala com o controller dispensa `proto/`
+- Plugin só de proxy ou só de controller omite a pasta da outra metade; plugin que não fala com o controller dispensa `proto/` (`n3x-new` aceita `--no-proto`)
 
 **Manifesto `n3x-plugin.yaml`** (ADR-013)
 ```yaml
 id: giustech.ratelimit
 version: 1.0.0
-sdk: ">=1.0.0 <2.0.0"          # faixa de SDK aceita; o build confere
+sdk: ">=1.0.0 <2.0.0"          # faixa de SDK aceita (gramática restrita `>=X.Y.Z <A.B.C`); o build confere
 halves: [proxy, controller]
 proxy:
   phases: [traffic]             # fases permitidas no n3x.yaml do serviço
@@ -120,7 +136,8 @@ Ambiente de implantação
 Tecnologias principais
 - Go 1.26 ou superior, sem cgo, com generics
 - grpc-go e protobuf (interface da conexão compartilhada e registrador gRPC)
-- templ e htmx só dentro do renderizador de widgets, nunca no contrato
+- htmx só dentro do renderizador de widgets, nunca no contrato; o HTML é escrito direto, sem templ no SDK (templ só no host)
+- go.yaml.in/yaml/v3 como única dependência de terceiros YAML, isolada em `yamlconv/`
 - SVG gerado no servidor para `Chart`
 - buf (`generate` e `breaking`) na CI dos plugins
 - `log/slog` para logs
@@ -140,15 +157,26 @@ Padrões adotados
 ### Componentes e responsabilidades
 | Componente | Responsabilidades | Dependências |
 | ----------- | ----------------- | ------------ |
-| `plugin/` | Validação do ID; fases e políticas; leitura do `n3x-plugin.yaml`; geração do JSON Schema a partir das tags; decodificação estrita da config (campo desconhecido é erro, `default` aplicado); tipo `plugin.Secret` | Biblioteca padrão |
-| `proxy/` | `Define[C](New)`; hooks `OnRequestHeaders`, `OnRequestBody`, `OnResponseHeaders` e `OnComplete`; `Stream` (path, método, headers, método gRPC, `SetRoute` até a fase `route`, `Deny`, `Go()`); respostas prontas de negação ciente de gRPC; `Env` com `Controller()`, `Background()`, `Dial()`, clientes HTTP e TCP com prazo, `Sleep()`, `Memory()`, `Metrics()`, `Log()` e `Target()` | `plugin/`, `memory/`, grpc-go |
-| `controller/` | `Define[C](New)`; capacidades `Start`, `Stop`, `GRPC`, `Routes`, `Cards` e `Validate`; `Caller(ctx)`; `State()` com `ok` e `degradado`; interfaces privilegiadas do core | `plugin/`, `memory/`, `controller/ui`, grpc-go |
-| `controller/ui` | Catálogo de widgets; renderizador que gera página inteira ou fragmento htmx, SVG dos gráficos, paginação, filtros, exportação, CSRF de `Form` e `Action` e acessibilidade WCAG 2.1 AA | templ (interno) |
-| `memory/` | `NewMap[K, V]` preso ao ID; cota em bytes estimados; descarte do mais antigo; 64 partes com trava por parte | Biblioteca padrão |
+| `plugin/` | Validação do ID; fases e políticas; leitura do `n3x-plugin.yaml`; geração do JSON Schema a partir das tags; decodificação estrita da config (campo desconhecido é erro, `default` aplicado; `desc` obrigatória, `json` snake_case explícito, durações em texto Go, tamanhos com base 1024); tipo `plugin.Secret` | Biblioteca padrão |
+| `yamlconv/` | Conversão YAML->JSON; única dependência de terceiros YAML do SDK (`go.yaml.in/yaml/v3`) | `go.yaml.in/yaml/v3` |
+| `schemagen/` | Programa auxiliar do build que gera os schemas | `plugin/` |
+| `proxy/` | `Define[C](New)`; hooks `OnRequestHeaders`, `OnRequestBody` (body inteiro, 1 MiB), `OnResponseHeaders` e `OnComplete`; `Stream` (path, método, headers, método gRPC, `Deny`, `Go()`) e `RouteStream` (acrescenta `SetRoute`, só em `access`, `authn` e `route`); respostas prontas de negação ciente de gRPC; `Env` com `Controller()`, `Background()`, `Dial()`, clientes HTTP e TCP com prazo, `Sleep()`, `Memory()`, `Metrics()`, `Log()` e `Target()` | `plugin/`, `memory/`, `telemetry/`, grpc-go |
+| `telemetry/` | Métricas, registro, handler de log e `request_id` | `plugin/` |
+| `chain/` | Lógica pura da cadeia; pacote de plataforma compartilhado com o executor do sidecar, fora do alcance de plugins | Biblioteca padrão, `plugin/`, `proxy/` |
+| `controller/` | Pacote `ctrl`; `Define[C](New)`; capacidades `Start`, `Stop`, `GRPC`, `PluginAPI`, `Routes`, `Cards` e `Validate`; `Caller(ctx)`; `State()` com `ok` e `degradado`; interfaces privilegiadas do core | `plugin/`, `memory/`, `controller/ui`, grpc-go |
+| `controller/hostrules` | Regras que o host aplica no registro (namespace, rotas e capacidades privilegiadas) | `plugin/` |
+| `controller/ui` | Catálogo de widgets; renderizador que gera página inteira ou fragmento htmx, SVG dos gráficos, paginação, filtros, exportação, CSRF de `Form` e `Action` e acessibilidade WCAG 2.1 AA; HTML escrito direto (sem templ no SDK); não importa `ctrl`; testado com `uitest` | Biblioteca padrão |
+| `memory/` | `NewMap[K, V]` com handle por instância preso ao ID; cota por plugin em bytes estimados; descarte aproximado do menos usado (CLOCK); 64 partes com trava por parte | Biblioteca padrão |
 | `secret/` | `ENC[v1:...]` com AES-256-GCM e AAD por serviço; `Encrypt`, `Decrypt` e `KeyGen`; zera buffers por melhor esforço | Biblioteca padrão |
-| `sdktest/` | Requisição, `Stream`, config, métricas e logs falsos; agendador determinístico; host falso de controller; `bufconn`; `AssertHonorsCancel`, `AssertZeroAllocs` e `AssertCounter`; alvos simulados | `proxy/`, `controller/` |
-| `example/` | Plugin `n3x.example`: adiciona header e nega um path em HTTP e gRPC, conta as negações e as envia ao controller, que mostra um cartão | Todos os pacotes de contrato |
-| `cmd/n3x-new` | `n3x-new <id>` cria a estrutura a partir do `example/`; `schema-check --against <tag>` confere a evolução da config | `plugin/` |
+| `internal/` | `clock`, `lifecycle`, `privileged`, `scaffold` e `schemadiff` | Biblioteca padrão |
+| `sdktest/` | Requisição, `Stream`, config, métricas e logs falsos; agendador determinístico; `AssertHonorsCancel`, `AssertZeroAllocs` e `AssertCounter`; alvos simulados | `proxy/`, `controller/` |
+| `sdktest/conformance` | Suítes de conformidade (Stream, Env e core) | `proxy/` |
+| `sdktest/ctrltest` | Host falso de controller (`NewHost`) e `bufconn` | `controller/` |
+| `sdktest/hostconformance` | Suíte de conformidade do host de controller | `controller/` |
+| `deploy/tools` | `deploytool` (módulo aninhado) | |
+| `deploy/e2e` | Harness `n3x-e2e` (módulos aninhados `plugins/faults` e `apps/eco`) | |
+| `example/` | Módulo aninhado `github.com/giustech/n3x-sdk/example`; plugin `n3x.example`: adiciona o header e nega o `deny_path`, em HTTP e gRPC, conta as negações e envia o total absoluto e idempotente por instância ao controller, que mostra um cartão | Todos os pacotes de contrato |
+| `cmd/n3x-new` | `n3x-new <id>` cria a estrutura a partir do `example/` (`--no-proto`; licença Apache 2.0 por padrão, `--license none` desliga); `schema-check --against <tag>` ou `--against latest` confere a evolução da config | `plugin/` |
 | Executor do sidecar (outro repositório) | Implementa `proxy.Env` e `proxy.Stream` sobre o adaptador de cada alvo | `proxy/` |
 | Host do controller (outro repositório) | Implementa `ctrl.Env`, os registradores e as checagens de namespace, rotas e capacidades privilegiadas | `controller/`, `controller/ui` |
 
@@ -163,13 +191,15 @@ type Config = types.ProxyConfig            // struct em types/, fonte do schema
 func Plugin() proxy.Plugin { return proxy.Define[Config](New) }   // chamado pelo registro gerado
 
 func New(cfg Config, env proxy.Env) (proxy.Instance, error) {
-    i := &Example{cfg: cfg, denies: env.Metrics().Counter("denies_total", "Negações", "path")}
+    i := &Example{cfg: cfg, bootID: newBootID(), denies: env.Metrics().Counter("denies_total", "Negações", "path")}
     i.count = memory.NewMap[string, int64](env.Memory(), "denies")
-    if conn, err := env.Controller(); err == nil {                 // ErrStandalone sem controller
+    if conn, err := env.Controller(); err == nil {                 // ErrStandalone sem controller; só o próprio namespace gRPC
         cli := examplev1.NewExampleClient(conn)
         env.Background("report", func(ctx context.Context) {       // controller só em segundo plano
             for ctx.Err() == nil {
-                cli.Report(ctx, &examplev1.ReportReq{Denies: i.total()})
+                // total absoluto desde a subida desta instância; o controller substitui, nunca soma
+                cli.Report(ctx, &examplev1.ReportRequest{PluginInstance: env.Instance(), BootId: i.bootID,
+                    Seq: i.nextSeq(), DeniesTotal: i.total(), DenyPath: i.cfg.DenyPath})
                 proxy.Sleep(ctx, 10*time.Second)
             }
         })
@@ -180,22 +210,26 @@ func New(cfg Config, env proxy.Env) (proxy.Instance, error) {
 func (i *Example) OnRequestHeaders(s proxy.Stream) proxy.Action {
     if strings.HasPrefix(s.Path(), i.cfg.DenyPath) {
         i.denies.With(i.cfg.DenyPath).Inc()
-        return s.Deny(proxy.Forbidden("bloqueado"))   // HTTP 403 ou gRPC PERMISSION_DENIED em trailers-only
+        return s.Deny(proxy.Forbidden("bloqueado"))   // HTTP 403 com corpo JSON ou gRPC PERMISSION_DENIED em trailers-only
     }
     s.Headers().Set(i.cfg.Header, "1")
     return proxy.Continue
 }
+
+// Só nas fases access, authn e route: SetRoute fica em proxy.RouteStream.
+//   if rs, ok := s.(proxy.RouteStream); ok { rs.SetRoute(...) }
 ```
 - Ações: `proxy.Continue`, `s.Deny(...)` e `s.Go(func(ctx) proxy.Result)`; `proxy.Fail(err)` aplica a política de falha
-- Negação sempre ciente de gRPC; resposta local crua não existe na API
+- Negação sempre ciente de gRPC; resposta local crua não existe na API. Em HTTP, o corpo é JSON `{"code":<status HTTP>,"message":...}` com `application/json; charset=utf-8`; em gRPC, resposta trailers-only
+- Hook de body: recebe o body inteiro, até 1 MiB
 - `Target().Has(proxy.CapX)` informa a capacidade ausente no alvo, e o plugin desliga a funcionalidade de forma explícita
-- Conexões: `env.Controller()` só em `Background()` (dentro de `s.Go()` devolve `proxy.ErrRequestPath`); `env.Dial()` permitido na requisição, com o prazo do `Go()`
-- Limites por plugin: 8 tarefas de fundo e 16 conexões em `Dial()` (ajustáveis na config)
+- Conexões: `env.Controller()` só do próprio namespace gRPC do plugin e só em `Background()` (dentro de `s.Go()` devolve `proxy.ErrRequestPath`); `env.Dial()` permitido na requisição, com o prazo do `Go()`
+- Limites por plugin: 8 tarefas de fundo e 16 conexões em `Dial()`, ajustáveis em `runtime.plugin_limits["<id>"]` (`memory.max_bytes`, `background.max_tasks`, `dial.max_conns`)
 - Body de resposta fora da v1; entra como `OnResponseBody` por adição
 
 **Contrato de controller** (FR-013, ADR-015, ADR-018 e ADR-019)
 ```go
-package controller
+package controller                       // diretório controller/ do plugin; o contrato do SDK é o pacote ctrl
 
 func Plugin() ctrl.Plugin { return ctrl.Define[Config](New) }
 
@@ -203,23 +237,28 @@ func New(cfg Config, env ctrl.Env) (ctrl.Instance, error) { return &Example{env:
 
 func (p *Example) GRPC(r ctrl.GRPCRegistrar) { examplev1.RegisterExampleServer(r, p) }  // só n3x.plugins.n3x.example.v1
 
-func (p *Example) Report(ctx context.Context, r *examplev1.ReportReq) (*examplev1.Ok, error) {
+func (p *Example) Report(ctx context.Context, r *examplev1.ReportRequest) (*examplev1.ReportResponse, error) {
     who := ctrl.Caller(ctx)                                   // {sidecar, pedidos, pedidos-7d9f-xk2lp}
-    p.soma(who.Service, r.Denies)
-    return &examplev1.Ok{}, nil
+    ok := p.substitui(who.Service, r.PluginInstance, r.BootId, r.Seq, r.DeniesTotal)  // total absoluto: substitui, nunca soma
+    return &examplev1.ReportResponse{Accepted: ok}, nil
 }
 
-func (p *Example) Cards(c ctrl.Cards) { c.Add("negacoes", ui.Stat{Label: "Negações", Value: p.total()}) }
+func (p *Example) Cards(c ctrl.Cards) {
+    c.Add("negacoes", ctrl.RoleRead, func(ctx context.Context) (ui.Widget, error) {
+        return ui.Stat{Label: "Negações", Value: strconv.FormatInt(p.total(), 10)}, nil   // Value é string formatada
+    })
+}
 
 func (p *Example) Routes(r ctrl.Routes) {
     r.Page("/negacoes", ctrl.RoleRead, func(ctx context.Context, q ui.Query) (ui.Widget, error) {
         return ui.Page{Title: "Negações", Body: ui.Column{Children: []ui.Widget{
-            ui.Row{Children: []ui.Widget{ui.Stat{Label: "Total", Value: p.total()}}},
-            ui.Section{Title: "Por serviço", Child: ui.Refresh{Every: 5 * time.Second, Child:
+            ui.Row{Children: []ui.Widget{ui.Stat{Label: "Total", Value: strconv.FormatInt(p.total(), 10)}}},
+            ui.Section{Title: "Por serviço", Child: ui.Refresh{ID: "por-servico", Every: 5 * time.Second, Child:
                 ui.Table{
-                    Columns: []ui.Column{{Key: "service", Label: "Serviço"}, {Key: "denies", Label: "Negações"}},
+                    ID:      "negacoes-por-servico",
+                    Columns: []ui.TableColumn{{Key: "service", Label: "Serviço"}, {Key: "denies", Label: "Negações"}},
                     Rows:    p.porServico(q),
-                    Export:  []ui.Format{ui.CSV, ui.JSON},
+                    Export:  []ui.Format{ui.CSV, ui.JSON},   // vazio por padrão; exportar exige root (ExportAllowRead libera a leitura)
                 },
             }},
         }}}, nil
@@ -227,16 +266,21 @@ func (p *Example) Routes(r ctrl.Routes) {
 }
 ```
 - Uma instância de controller por plugin, criada uma vez; o host chama as capacidades de registro e, depois, o grpc-go e o roteador HTTP chamam os handlers por nome
+- Ordem após `Start`: `GRPC`, `PublicGRPC` (só o core), `PluginAPI`, `Routes` e `Cards`
+- API entre plugins: gRPC em processo; o provedor registra em `PluginAPI`, o consumidor usa `env.Dependency(id)` só para IDs de `depends_on`, e o `Caller` chega com o papel `RolePlugin`
 - `env` traz config tipada, logger, métricas, memória isolada e `State()`
-- Estado: o plugin declara `ok` ou `degradado` com motivo (banner no painel); `falho` é decidido só pelo host
+- Estado: o plugin declara `ok` ou `degradado` com motivo (banner no painel); `falho` é decidido só pelo host (falha operacional de `New`/`Start` e panic)
+- Plugin opcional com config inválida ou registro recusado impede a subida do controller; só falha operacional de `New`/`Start` e panic o deixam `falho`
 - O banco é do plugin, configurado na seção dele no `n3x.yaml` do controller (ADR-002 do `n3x-controller`)
 
 **Catálogo de widgets da v1** (ADR-018)
 | Grupo | Widgets |
 | --- | --- |
 | Layout | `Page`, `Column`, `Row`, `Grid`, `Section` e `Tabs` |
-| Conteúdo | `Text`, `Stat`, `Badge`, `Table`, `Chart` (linha e barra, em SVG), `Detail`, `Code` (YAML e diff) e `Empty` |
+| Conteúdo | `Text`, `Stat` (`Value` é `string` formatada), `Badge`, `Table` (colunas `ui.TableColumn`; `ui.Column` é só layout), `Chart` (linha e barra, em SVG), `Detail`, `Code` (texto, YAML, JSON e diff), `Pipeline` (+ `Stage`) e `Empty` |
 | Interação | `Refresh` (polling htmx), `Link`, `Form` e `Action` (CSRF automático; sem papel declarado, exige root) |
+
+- `Refresh` e `Table` exigem `ID`; `Table.Export` vem vazio por padrão, e exportar exige root (`ExportAllowRead` libera a leitura); `ui.External` não existe na v1; horas em UTC
 
 **Capacidades privilegiadas do core** (ADR-019), aceitas só de `n3x.core` vindo de `github.com/giustech/n3x-plugin-core`
 | Capacidade | Lado | Quem implementa | Interface |
@@ -248,6 +292,15 @@ func (p *Example) Routes(r ctrl.Routes) {
 | Verificador de credencial | Controller | Host, entregue só ao core | `env.Credentials().Verify(ctx, serviço, segredo, ip) error` |
 | Corte de sessões | Controller | Host, entregue só ao core | `env.Sessions().Revoke(usuário)`; sem uso na v1, que não tem gestão de usuários em runtime |
 | Interceptor da conexão | Sidecar | Core | `ConnInterceptors() (unary, stream)` |
+| `CoreEnv` | Proxy e controller | Host, entregue só ao core | Extensão do `Env` obtida por type assertion (`proxy.CoreEnv`, `ctrl.CoreEnv`); o `Env` dos demais plugins não a implementa |
+| Visão `Sidecar` | Sidecar | Host, entregue só ao core | Via `proxy.CoreEnv`: identidade, manifesto, `ConfigInput`, fila de eventos, `Draining`, `ExitContext` e `SessionReporter` |
+| Validador de host | Controller | Host | `HostValidator`/`CheckHost` |
+| Manifesto do controller | Controller | Host, entregue só ao core | `ControllerManifest` (via `ctrl.CoreEnv`) |
+| IP do chamador | Controller | Host, entregue só ao core | `CallerIP` (via `ctrl.CoreEnv`) |
+
+- O login é o serviço próprio `n3x.plugins.n3x.core.v1.Login`; `Register`, `Heartbeat` e `Exit` ficam em `Core`
+- `WriteAudit` continua reservado à v2
+- A metade de proxy só de fundo (sem hooks de requisição) é exclusiva do core; o core declara `degradado` e o host marca `falho` por panic repetido na autenticação
 
 **Kit de testes** (FR-014)
 ```go
@@ -264,8 +317,9 @@ func TestRespeitaCancelamento(t *testing.T) { sdktest.AssertHonorsCancel(t, agen
 | `NewProxy`, `GET`, `POST` e `GRPC` | Requisição, config e `Stream` falsos, com as mesmas regras do executor (fases, grupos e negação gRPC) |
 | Agendador determinístico | Roda `Go()` e `Background()` passo a passo, sem `time.Sleep` |
 | Métricas e logs falsos | `AssertCounter` e checagem de que nenhum `plugin.Secret` aparece em logs |
-| `NewHost` | Host falso de controller: `Start`, `GRPC`, `Routes`, `Cards`, papéis e renderização de widgets |
-| `bufconn` | Liga a metade de proxy à de controller no mesmo teste |
+| `ctrltest.NewHost` (`sdktest/ctrltest`) | Host falso de controller: `Start`, `GRPC`, `Routes`, `Cards`, papéis e renderização de widgets |
+| `bufconn` (no `ctrltest`) | Liga a metade de proxy à de controller no mesmo teste |
+| `sdktest/conformance` e `sdktest/hostconformance` | Suítes de conformidade da metade de proxy (Stream, Env, core) e do host de controller |
 | `AssertHonorsCancel` e `AssertZeroAllocs` | Portões obrigatórios: prazo respeitado e 0 alocações |
 | Alvos simulados | `envoy-1.40` e `istio-1.31`, para testar capacidades ausentes |
 
@@ -304,8 +358,9 @@ Tudo roda com `go test -race`, sem Envoy e sem controller.
   - no desligamento, o `ctx` é cancelado e há 2 s para terminar
 - **Subida no controller:**
   - decodifica a seção do plugin, roda `Validate` e chama `New`
-  - roda `Start` com prazo e depois `GRPC`, `Routes` e `Cards`
+  - roda `Start` com prazo e depois `GRPC`, `PublicGRPC` (só o core), `PluginAPI`, `Routes` e `Cards`
   - o host confere o namespace, as rotas e as capacidades privilegiadas
+  - plugin opcional com config inválida ou registro recusado impede a subida do controller
 - **Página no painel:**
   - o host aplica sessão, CSRF e papel e chama a função da página com `ctx` e prazo (`runtime.plugin_call_timeout`)
   - a função devolve a árvore de widgets
@@ -324,14 +379,14 @@ Tudo roda com `go test -race`, sem Envoy e sem controller.
 Entidades principais
 - **Manifesto do plugin** (`n3x-plugin.yaml`): `id`, `version`, `sdk`, `halves`, fases permitidas, `default_phase`, `default_order`, `default_failure`, `required` e `depends_on`
 - **Manifesto embutido:** manifestos dos plugins + JSON Schema de cada config + alvo + hash (formato do HLD do `n3x-builder`)
-- **Config tipada:** struct Go com tags `json`, `n3x` (`required`, `min`, `max` e `enum`), `desc` e `default`, e campos sensíveis em `plugin.Secret`
+- **Config tipada:** struct Go com tags `json` (snake_case explícito), `n3x` (`required`, `min`, `max` e `enum`), `desc` (obrigatória) e `default`, e campos sensíveis em `plugin.Secret`; durações em texto Go e tamanhos com base 1024
 - **Instância de proxy:** objeto devolvido pelo `New`, um por `instance` do `n3x.yaml` do serviço
 - **Instância de controller:** objeto devolvido pelo `New`, um por plugin
 - **Identidade (`Caller`):** papel `root`, `leitura` ou `sidecar`, mais usuário ou serviço e instância
 - **Evento de auditoria** (reservado para a v2): ator, ação, alvo, IP e horário; montado pelo host e gravado pelo core
 - **Estado do plugin:** `ok` e `degradado` (declarados pelo plugin) e `falho` (só pelo host), com motivo e horário
 - **Widget:** árvore de `ui.Widget`, gerada a cada requisição e nunca guardada
-- **Mapa de memória:** `memory.Map[K, V]`, preso ao ID e com cota por plugin
+- **Mapa de memória:** `memory.Map[K, V]`, com handle por instância preso ao ID e cota por plugin (`runtime.plugin_limits["<id>"].memory.max_bytes`)
 
 Relações
 - Plugin 1:1 manifesto; plugin 1:N instâncias de proxy; plugin 0:1 instância de controller
@@ -349,6 +404,8 @@ Versionamento e retenção
 - Config do plugin: só por adição dentro da major do plugin, conferida na CI com `n3x-new schema-check` (ADR-020)
 - Protos: `n3x.plugins.<namespace>.<nome>.v<major>`, só por adição, com `buf breaking`
 - SDK: semver estrito, estável desde a `v1.0.0` (ADR-021)
+- Série `0.x` do plugin: a mesma minor; `n3x-new schema-check --against latest` confere contra a última tag
+- Faixa `sdk` do manifesto com gramática restrita `>=X.Y.Z <A.B.C`
 - Nada é retido pelo SDK
 
 ---
@@ -359,7 +416,7 @@ Versionamento e retenção
 | `proxy/` | SDK | API Go | Externa (autores de plugin) | 0 alocações nos caminhos comuns; hooks síncronos do core e do exemplo em p50 ≤ 0,05 ms (orçamento do sidecar); 8 tarefas de fundo e 16 conexões por plugin |
 | `controller/` | SDK | API Go | Externa (autores de plugin) | Página com o prazo do host (10 s); cartão com prazo de 1 s |
 | `controller/ui` | SDK | API Go (widgets) | Externa (autores de plugin) | Tabela de 500 linhas renderizada em até 5 ms; paginação de 50 linhas por padrão; WCAG 2.1 AA |
-| `memory/` | SDK | API Go | Externa | 16 MiB no sidecar e 64 MiB no controller por plugin; seguro entre os workers do Envoy |
+| `memory/` | SDK | API Go | Externa | 16 MiB no sidecar e 64 MiB no controller por plugin (ajustável em `runtime.plugin_limits["<id>"].memory.max_bytes`); seguro entre os workers do Envoy |
 | `plugin/` | SDK | API Go + tags de struct | Externa | Schema gerado; config só evolui por adição |
 | `secret/` | SDK | API Go | Interna (sidecar, controller e builder) | Proibido aos plugins |
 | `sdktest/` | SDK | API Go | Externa | `go test -race`, sem Envoy e sem controller |
@@ -388,6 +445,7 @@ Técnicas aplicadas
 - **Limites por plugin:**
   - 8 tarefas de fundo (a 9ª falha no `New`)
   - 16 conexões em `Dial()` (a 17ª espera vaga até o prazo do `Go()`)
+  - ajustáveis em `runtime.plugin_limits["<id>"]` (`background.max_tasks`, `dial.max_conns`)
 - **Renderizador de widgets** com buffer reaproveitado e paginação no servidor, para o painel ficar em p95 < 300 ms com 500 sidecars
 - **Reinício com backoff** das tarefas de fundo após panic
 - **Portões de CI:** `AssertZeroAllocs` nos acessores, no `Deny` e no `Map.Get` do exemplo, e benchmark do renderizador
@@ -409,7 +467,7 @@ Autorização
 - Capacidades privilegiadas aceitas só de `n3x.core` vindo de `github.com/giustech/n3x-plugin-core` (ADR-019)
 - Namespace `n3x` reservado aos módulos `github.com/giustech/` (ADR-012)
 - Registro gRPC fora de `n3x.plugins.<namespace>.<nome>.v<major>` ou rota fora de `/plugins/<namespace>/<nome>/`: recusado na subida
-- Alteração de rota só nas fases até `route`
+- Alteração de rota só nas fases `access`, `authn` e `route`, via `proxy.RouteStream`
 - Estado `falho` só pelo host; o plugin não consegue se desligar sozinho
 
 Proteção de dados
@@ -432,7 +490,9 @@ Proteção de dados
 | API marcada `// Deprecated:` | Só aviso, sem falhar (ADR-021) |
 
 Gestão de segredos
-- Segredos da config em `ENC[v1:...]` no `n3x.yaml`, decifrados pelo sidecar ou pelo controller com `secret/` antes do `New`
+- Segredos da config em `ENC[v1:...]` no `n3x.yaml`, decifrados com `secret/` antes do `New`: o entrypoint confere e o `.so` (sidecar) ou o host (controller) decifra
+- Escopo (AAD): por serviço no sidecar e por plugin no controller
+- `plugin.Secret` mostra `***` em log, `fmt`, JSON e erros
 - A chave AES nunca chega ao plugin
 - `secret/` usa só a biblioteca padrão e é o único código do formato `ENC[...]` (ADR-014)
 
@@ -451,6 +511,9 @@ Métricas
   - `n3x_plugin_duration_seconds` por hook
   - `n3x_plugin_memory_bytes`
   - `n3x_plugin_memory_evictions_total`
+  - `n3x_plugin_memory_max_bytes`
+  - tarefas de fundo, conexões, chamadas ao controller, logs descartados e séries: `n3x_plugin_background_tasks`, `n3x_plugin_background_restarts_total`, `n3x_plugin_dial_conns`, `n3x_plugin_dial_max_conns`, `n3x_plugin_dial_failures_total`, `n3x_plugin_controller_calls_total`, `n3x_plugin_log_dropped_total` e `n3x_plugin_metric_series`
+- Histogramas: no sidecar saem como `_bucket` e `_count`, sem `_sum` (limitação das stats do Envoy); no controller saem exatos, com `_sum`
 - Os contadores de falha, panic, disjuntor e zumbis continuam no executor (HLD do `n3x-sidecar`)
 
 Tracing
@@ -480,7 +543,7 @@ Dashboards e alertas
 - **Probabilidade:** média
 - **Impacto:** derruba o Envoy e o serviço perde a entrada até o restart
 - **Mitigação:**
-  - Lista de bibliotecas aprovadas para connectors
+  - Recomendação de bibliotecas para connectors no guia do autor (sem validação no build)
   - Teste de longa duração e de injeção de falha com o connector real
   - Documentação do risco no guia do autor
 - **Plano de contingência:** tirar o plugin da imagem e redeployar
@@ -536,13 +599,13 @@ Dashboards e alertas
 
 ### ADRs e próximos passos
 ADRs associados
-- [ADR-011: Módulo único com pacotes por metade e regras de dependência](adr/ADR-011-modulo-unico-e-regras-de-dependencia.md)
+- [ADR-011: Módulo único com pacotes por metade e regras de dependência (a atualizar: `example/` e `deploy/` são módulos aninhados)](adr/ADR-011-modulo-unico-e-regras-de-dependencia.md)
 - [ADR-012: ID do plugin no formato `<namespace>.<nome>`](adr/ADR-012-id-com-namespace.md)
 - [ADR-013: Manifesto `n3x-plugin.yaml` e gerador `n3x-new`](adr/ADR-013-manifesto-n3x-plugin-yaml-e-gerador.md)
 - [ADR-014: Pacote `secret` no SDK, proibido aos plugins](adr/ADR-014-pacote-secret-no-sdk.md)
 - [ADR-015: Hooks e capacidades como interfaces opcionais, com config tipada](adr/ADR-015-interfaces-opcionais-e-config-tipada.md)
 - [ADR-016: Controller só em segundo plano; conexões próprias permitidas na requisição](adr/ADR-016-controller-so-em-segundo-plano.md)
-- [ADR-017: Memória isolada com mapas tipados, cota e descarte do mais antigo](adr/ADR-017-mapas-de-memoria-com-cota.md)
+- [ADR-017: Memória isolada com mapas tipados, cota e descarte do mais antigo (na prática, descarte aproximado do menos usado, CLOCK)](adr/ADR-017-mapas-de-memoria-com-cota.md)
 - [ADR-018: Telas de plugin como árvore de widgets, sem HTML](adr/ADR-018-telas-por-widgets.md)
 - [ADR-019: Contrato das capacidades privilegiadas do plugin core](adr/ADR-019-contrato-das-capacidades-do-core.md)
 - [ADR-020: Schema gerado da struct, `plugin.Secret` e evolução só por adição](adr/ADR-020-schema-da-struct-e-plugin-secret.md)
@@ -551,11 +614,12 @@ ADRs associados
 - Herdados da plataforma (mesma pasta): ADR-004 (capacidades do core), ADR-005 (memória isolada), ADR-008 (exemplos de deploy) e ADR-009 (sem tracing)
 
 Decisões pendentes
-- Lista de bibliotecas aprovadas para connectors (Redis, Postgres e HTTP): definir com o protótipo de rate limit
+- Resolvida: lista de bibliotecas aprovadas para connectors (Redis, Postgres e HTTP); fica só como recomendação no guia do autor, sem validação no build
 - Lista exata de capacidades por alvo (`proxy.CapX`): depende da prova de carga do `.so` no `istio-1.31` (HLD do `n3x-sidecar`)
 - Formato do manifesto embutido e do hash: HLD do `n3x-builder`
 - Resolvida: formato da config efetiva enviada ao controller, com mascaramento por `plugin.Secret` e hash (ADR-006 do `n3x-plugin-core`)
-- Renderização interna dos widgets (templ ou geração direta de HTML) e tema visual do painel: LLD do `controller/ui`, junto com o HLD do `n3x-controller`
+- Resolvida: renderização interna dos widgets é HTML escrito direto no SDK (sem templ; templ só no host)
+- Tema visual do painel: LLD do `controller/ui`, junto com o HLD do `n3x-controller`
 
 Próximos passos
 - Implementar `plugin/` (ID, manifesto, schema por tags e `plugin.Secret`) com testes de tabela e fuzzing

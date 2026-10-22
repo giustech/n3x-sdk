@@ -36,7 +36,7 @@ Responsável: Guilherme Giusti
 - Go 1.26 ou superior, `buf` v2, `protoc-gen-go` e `protoc-gen-go-grpc` fixados num módulo `tools/` aninhado (mesmo padrão da FDD 36)
 - O Go proxy e o `go mod download` aceitam módulo aninhado com tag prefixada (`example/v0.3.0` resolve `github.com/giustech/n3x-sdk/example@v0.3.0`); comportamento documentado do `go` desde a 1.13
 - O `go.work` na raiz do `n3x-sdk` faz os testes do exemplo rodarem contra o SDK do mesmo commit, o que permite validar as pré-releases antes da tag (ADR-021)
-- 500 sidecars com uma ou duas instâncias do exemplo geram até 100 relatórios por segundo no controller (intervalo de 10 s), carga desprezível para a metade de controller (hipótese de dimensionamento)
+- 500 sidecars com uma ou duas instâncias do exemplo geram até 100 relatórios por segundo no controller (intervalo de 10 s), carga desprezível para a metade de controller (confirmado)
 
 **Restrições**
 - `agent/` não importa `controller/` nem `controller/ui` (ADR-011; P-10 da FDD 08; regra da FDD 24); `types/` importa só a biblioteca padrão e `github.com/giustech/n3x-sdk/plugin`; `proto/` importa só biblioteca padrão, protobuf e grpc
@@ -50,9 +50,9 @@ Responsável: Guilherme Giusti
 - HLDs: `n3x-sdk/docs/HLD.md` ("Componentes", "Contrato de proxy", "Contrato de controller", "Kit de testes", "Estrutura padrão de um repositório de plugin", "Manifesto `n3x-plugin.yaml`", portões de CI); `n3x-sidecar/docs/HLD.md` (instância `n3x.example` do `n3x.yaml` v1, orçamento com core mais exemplo)
 - FDDs usadas como contrato: 01 (manifesto literal do exemplo, derivações do ID), 02 (tags, `SchemaOf`, golden), 04 (`memory.NewMap`, sem `Range`, cópia no `Set`), 05 (`OnRequestHeaders`, `Forbidden`, `Headers().Set`, `CheckHeader`, `CheckRoute`, `Path()` com query), 06 (`Env`, `Background`, `Controller`, `ErrStandalone`, `Sleep`, `telemetry`), 07 (`sdktest`), 08 (`ctrl.Define`, capacidades, `Caller`, `Routes`, `Cards`, `InMenu`, `StateReporter`), 10 (`Page`, `Stat`, `Table`, `FormatInt`, `ConfigDetail`), 11 (`Refresh`, `Action`, `Routes.Action`, `Export`, `PluginPath`, `LinkCell`), 12 (`ctrltest`), 15 (instância de referência e `match`), 17 (casos de executor), 18 (efeitos da política), 19 (requisitos do `add`), 36 (convenções de `buf`, golden e layout)
 - Lacunas do README:
-  - **L-54 fechada aqui:** a config é `header` (padrão `X-N3X`) e `deny_path` (padrão vazio, que não nega nada); o valor do header é fixo, `"1"`; a fase permitida é só `transform`, como já fixado pelo manifesto literal da FDD 01 e usado pelas FDDs 07, 15 e 17. O HLD do sidecar (`name` e `value`) está desatualizado (I-01)
-  - **L-55 fechada aqui:** o relatório é **absoluto e idempotente**: cada instância de plugin envia o total desde a própria subida, com `boot_id` e `seq`; o controller guarda o último valor por instância e **substitui**, nunca soma; troca de `boot_id` acumula o valor anterior; zerar é uma linha de base no controller (contrato 6)
-  - **L-43 fechada na parte da FDD 13 (hipótese):** a injeção de panic e de atraso não fica no exemplo. Ela usa um plugin só de teste da FDD 48 (por exemplo o `conformance.ScriptPlugin`, como já faz a FDD 18), para nenhum atalho de teste ir parar no molde do `n3x-new` nem no exemplo publicado
+  - **L-54 fechada aqui (confirmado):** a config é `header` (padrão `X-N3X`) e `deny_path` (padrão vazio, que não nega nada); o valor do header é fixo, `"1"`; a fase permitida é só `transform`, como já fixado pelo manifesto literal da FDD 01 e usado pelas FDDs 07, 15 e 17. O HLD do sidecar (`name` e `value`) está desatualizado (I-01)
+  - **L-55 fechada aqui (confirmado):** o relatório é **absoluto e idempotente**: cada instância de plugin envia o total desde a própria subida, com `boot_id` e `seq`; o controller guarda o último valor por instância e **substitui**, nunca soma; troca de `boot_id` acumula o valor anterior; zerar é uma linha de base no controller (contrato 6)
+  - **L-43 fechada na parte da FDD 13 (confirmado):** a injeção de panic e de atraso não fica no exemplo. Ela usa um plugin só de teste da FDD 48 (por exemplo o `conformance.ScriptPlugin`, como já faz a FDD 18), para nenhum atalho de teste ir parar no molde do `n3x-new` nem no exemplo publicado
 - Pedidos de FDDs anteriores atendidos:
   - FDD 04: nenhuma leitura depende de iteração; índices explícitos guardados no próprio `memory.Map` (contrato 8)
   - FDDs 02 e 36: golden dos schemas reais em `types/testdata/schema/proxy.json` e `controller.json` (contrato 2)
@@ -65,11 +65,26 @@ Responsável: Guilherme Giusti
   - FDD 17: semântica do `deny_path` por segmento, sem a query, e a instância `deny-grpc` na config de referência (contratos 3 e 11)
   - FDD 12: testes da metade de controller com `ctrltest.NewHost`, `Link` e o cartão `negacoes`; `res.Action("Zerar contagem").Submit()` (seção 9)
 
+**Decisões aprovadas na clarificação**
+- Config do `n3x.example` (L-54, confirmado): `header` e `deny_path`, com o valor do header fixo `"1"`; não há `name` nem `value`, e o HLD do sidecar (que usa `name`/`value`) é tratado como desatualizado
+- Contagem de negações (L-55 e objetivo 1, confirmados): total absoluto e idempotente por instância (`boot_id`, `seq`, `denies_total`, com `baseline` e `retired`); o controller substitui e nunca soma
+- A negação HTTP do exemplo usa o corpo JSON da FDD 05 (`{"code":403,"message":"bloqueado"}`, `application/json; charset=utf-8`); a exportação das tabelas do exemplo exige root (padrão da FDD 11), sem `ExportAllowRead`
+- O `example/` é módulo Go aninhado (`github.com/giustech/n3x-sdk/example`) com `go.mod` próprio, `go.work` e tags `example/vX.Y.Z`; o HLD (L53/L150) e a ADR-011 devem registrar isso, e o código de exemplo do HLD (`ReportReq`/`Ok`, `c.Add(id, widget)`, soma a cada relatório) deve ser atualizado para `ReportRequest`/`ReportResponse` com `boot_id`/`seq`, `Cards.Add(id, papel, fn)` e contagem absoluta
+- As demais hipóteses numéricas, de teste e de baixo risco ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Uma instância cujo registro venceu ou foi descartado pela cota recontabiliza tudo desde a subida quando volta a reportar, apesar de a tela dizer "desde a última zeragem": a página traz a ressalva no texto (contrato 9); tratar de outra forma fica para depois
+- A tarefa `report` lê `total` e `seq` em dois atômicos separados: o controller só exige monotonicidade (contrato 5)
+- Premissa do Go proxy: `example/vX.Y.Z` resolve para `github.com/giustech/n3x-sdk/example@vX.Y.Z` e o `require` do `example/go.mod` precisa apontar para um SDK já publicado
+- Dependem de outros repositórios: FDD 14 e 19 (`n3x-new`, `n3x-plugin add` com módulo aninhado e tag prefixada), 15 e 30 (`testdata/n3x/*.yaml` em `validate`), 16, 17, 18 e 49 (negação e alvos), 24, 26 (`normalize_path`), 32 a 36, 47, 48 (aplicações Go e Python, plugin de teste de panic) e 50; as FDDs 16, 17 e 21 citam o caminho ilustrativo `github.com/giustech/n3x-example`, que esta FDD substitui
+- Divergências para o Workflow 3: HLD do sidecar (`name`/`value`), HLD do SDK (exemplo de código) e ADR-011 (módulo aninhado)
+- Receber da FDD 14 os marcadores `noproto` (quarta combinação do molde com `--no-proto`: duas metades sem `proto/` nem tarefa `report`).
+
 ---
 
 ### 2. Objetivos técnicos
 
-- **Contagem exata e idempotente.** Invariante: o total mostrado para uma instância é igual ao número de negações dela desde a subida (menos a linha de base de "Zerar contagem"), qualquer que seja o número de relatórios repetidos, perdidos ou fora de ordem. Medida: 1.000 relatórios aleatórios repetidos, embaralhados e com 10% de perda dão no cartão o mesmo valor que o último total enviado, em 100 de 100 execuções.
+- **Contagem exata e idempotente (confirmado).** Invariante: o total mostrado para uma instância é igual ao número de negações dela desde a subida (menos a linha de base de "Zerar contagem"), qualquer que seja o número de relatórios repetidos, perdidos ou fora de ordem. Medida: 1.000 relatórios aleatórios repetidos, embaralhados e com 10% de perda dão no cartão o mesmo valor que o último total enviado, em 100 de 100 execuções.
 - **Mesmo resultado em todos os lugares.** Invariante: o kit (`sdktest`), o executor do sidecar e o Envoy real nos dois alvos produzem o resultado de cada caso de `testdata/cases.json`. Medida: os casos passam no `go test` do exemplo e são consumidos pela FDD 48 em aplicações Go e Python, em HTTP/1.1, HTTP/2 e gRPC, sem mudança no arquivo.
 - **Negação gRPC nunca como sucesso.** Medida: os casos gRPC negados terminam com HTTP 200, `grpc-status: 7`, `grpc-message: bloqueado`, trailers-only, em 100% das execuções do kit e da FDD 48; nenhum caso termina com `grpc-status: 0`.
 - **Caminho quente sem custo.** Medida: `OnRequestHeaders` com 0 alocações nos três caminhos (nega, adiciona header, `deny_path` vazio) e `Map.Get` com 0 alocações nas duas metades, medidos por `AssertZeroAllocs` e `AssertZeroAllocsFunc` sem `-race`; p50 do hook até 0,05 ms dentro do orçamento "core mais exemplo" do HLD do sidecar (confirmado pela FDD 50).
@@ -98,7 +113,7 @@ Responsável: Guilherme Giusti
 - Suíte ponta a ponta, aplicações de teste em Go e Python, plugin só de teste de panic e atraso (L-43) e CI cruzada: FDD 48 (SDK-16)
 - Dockerfiles, `n3x-plugin add`, build do `.so` e do controller: FDDs 19 a 23
 - Topologias de deploy e guia do autor: FDD 47 (SDK-15); os fragmentos de `testdata/n3x/` são dados de teste, não exemplos de deploy (ADR-008)
-- Banco, `Starter`, `Stopper`, `PluginAPI`, `Dial` e `HTTPClient`: o exemplo não precisa deles; o guia da FDD 47 mostra esses casos com outros plugins (hipótese)
+- Banco, `Starter`, `Stopper`, `PluginAPI`, `Dial` e `HTTPClient`: o exemplo não precisa deles; o guia da FDD 47 mostra esses casos com outros plugins (confirmado)
 - Dependência do inventário do core: o exemplo não declara `depends_on` e não sabe se uma instância saiu do inventário; usa retenção própria (contrato 7)
 
 ---
@@ -111,7 +126,7 @@ Responsável: Guilherme Giusti
   - casa: soma 1 no contador atômico da instância, soma 1 na série `n3x_n3x_example_denies_total{path=<deny_path>}` resolvida no `New` e devolve `s.Deny(e.deny)` com a resposta `proxy.Forbidden("bloqueado")` montada no `New`
   - não casa: segue
 - `s.Headers().Set(cfg.Header, "1")`, que troca qualquer valor que o cliente tenha mandado no mesmo header, e `proxy.Continue`
-- O executor renderiza a negação: HTTP 403 `text/plain; charset=utf-8` com corpo `bloqueado`, ou gRPC com HTTP 200, `grpc-status: 7` e `grpc-message: bloqueado` em trailers-only; conta `n3x_plugin_denies_total{code="403"}` (FDDs 05 e 17)
+- O executor renderiza a negação: HTTP 403 `application/json; charset=utf-8` com corpo `{"code":403,"message":"bloqueado"}`, ou gRPC com HTTP 200, `grpc-status: 7` e `grpc-message: bloqueado` em trailers-only; conta `n3x_plugin_denies_total{code="403"}` (FDDs 05 e 17)
 
 **Fluxo da tarefa `report` (metade de proxy, em segundo plano)**
 - No `New`: `env.Controller()`; com `ErrStandalone`, loga `report_disabled` (`reason=standalone`) e não registra tarefa; senão cria o client `examplev1.NewExampleClient(conn)` e registra `env.Background("report", e.report)`
@@ -119,7 +134,7 @@ Responsável: Guilherme Giusti
 - A tarefa começa depois da subida inteira (FDD 06) e envia o primeiro relatório na hora; depois, um a cada `types.ReportInterval` (10 s), com `proxy.Sleep(ctx, ...)`; `Sleep` devolvendo erro encerra a tarefa
 - Cada envio: `seq` sobe 1 (contador atômico da instância, que sobrevive ao reinício da tarefa depois de panic), `ReportRequest{plugin_instance: env.Instance(), boot_id, seq, denies_total: total atual, deny_path: cfg.DenyPath}`, `cli.Report(ctx, req)` com o teto de 5 s do SDK (`proxy.DefaultControllerCallTimeout`, aplicado pela visão do `Env`)
 - Resultado: conta `n3x_n3x_example_reports_sent_total{result="ok"|"error"}` e atualiza o estado `report` no `memory.Map` (último sucesso, falhas seguidas, último código); o log de falha é amostrado por esse estado (contrato 5)
-- Sem nova tentativa no mesmo ciclo e sem `proxy.Buffered`: o próximo relatório leva o total novo, que substitui o anterior; guardar relatórios velhos não acrescenta nada (hipótese)
+- Sem nova tentativa no mesmo ciclo e sem `proxy.Buffered`: o próximo relatório leva o total novo, que substitui o anterior; guardar relatórios velhos não acrescenta nada (confirmado)
 - `UNIMPLEMENTED` (controller sem a metade de controller do exemplo, permitido porque `controller.required: false`): o intervalo passa a `types.ReportIdleInterval` (60 s) e sai o log `report_unimplemented` uma vez; volta a 10 s no primeiro sucesso
 
 **Fluxo do `Report` na metade de controller**
@@ -151,7 +166,7 @@ Responsável: Guilherme Giusti
 
 **Fluxos alternativos e exceções**
 - **Sidecar reiniciado:** a instância volta com `boot_id` novo e total 0; o controller acumula o valor anterior em `retired`, então o total do serviço não cai
-- **Instância some (pod removido, escala para baixo):** sem relatório, o registro vence depois de `retention` (padrão 24 h) e sai do total; a tela diz "instâncias com relatório nas últimas 24 h". O exemplo não lê o inventário do core (hipótese)
+- **Instância some (pod removido, escala para baixo):** sem relatório, o registro vence depois de `retention` (padrão 24 h) e sai do total; a tela diz "instâncias com relatório nas últimas 24 h". O exemplo não lê o inventário do core (confirmado)
 - **Controller reiniciado:** a memória é volátil (ADR-017); depois do primeiro ciclo de 10 s cada instância ativa reaparece com o total desde a própria subida; `retired` e linhas de base anteriores se perdem
 - **Registro descartado pela cota de memória:** igual ao caso anterior, só para aquela instância; o índice descartado é refeito pelos relatórios seguintes
 - **Duas instâncias do exemplo no mesmo sidecar** (`add-header` e `deny-grpc`): cada uma tem contador, `boot_id`, tarefa e registro próprios; somam no mesmo serviço
@@ -176,7 +191,7 @@ sequenceDiagram
     X->>A: OnRequestHeaders(s)
     A->>A: corta a query, confere o segmento, total++
     A-->>X: Deny(Forbidden("bloqueado"))
-    X-->>C: 403 text/plain "bloqueado"
+    X-->>C: 403 application/json {"code":403,"message":"bloqueado"}
     Note over T: a cada 10 s, em segundo plano
     T->>H: Report(boot_id, seq, denies_total)
     H->>P: Caller {sidecar, pedidos, pedidos-0}
@@ -235,6 +250,8 @@ flowchart LR
   ```
   ```yaml
   # n3x-plugin.yaml na série estável (forma literal da FDD 01, contrato 7)
+  # Os valores abaixo (version 1.0.0, sdk ">=1.0.0 <2.0.0") são ilustrativos da série estável.
+  # Na série 0 (primeira release v0.1.0) vale version: 0.1.0 e sdk: ">=0.1.0 <0.2.0".
   id: n3x.example
   version: 1.0.0
   sdk: ">=1.0.0 <2.0.0"
@@ -245,7 +262,8 @@ flowchart LR
 - Método: n/a
 - Semântica:
   - **Módulo aninhado:** o `example/` tem `go.mod` próprio, então sai do `.zip` do módulo do SDK (regra do Go usada pela FDD 19) e o `n3x-plugin add github.com/giustech/n3x-sdk/example@v1.0.0` acha o manifesto na raiz do módulo. O caminho começa com `github.com/giustech/`, então passa no `CheckNamespace` do namespace `n3x`
-  - **Tags e versões:** o exemplo é lançado com o mesmo número do SDK, em tag prefixada `example/vX.Y.Z` criada depois da tag `vX.Y.Z` do SDK e de um commit que sobe o `require` do `example/go.mod` para `vX.Y.Z` (hipótese). `version` do manifesto é `X.Y.Z` (sem `v`), igual à tag, como exige a FDD 19
+  - **Tags e versões:** o exemplo é lançado com o mesmo número do SDK, em tag prefixada `example/vX.Y.Z` criada depois da tag `vX.Y.Z` do SDK e de um commit que sobe o `require` do `example/go.mod` para `vX.Y.Z` (confirmado). `version` do manifesto é `X.Y.Z` (sem `v`), igual à tag, como exige a FDD 19
+  - **Manifesto literal e série 0:** o bloco acima, com `version: 1.0.0` e `sdk: ">=1.0.0 <2.0.0"`, é ilustrativo da série estável. Na série 0, cuja primeira release é `v0.1.0`, o manifesto publicado traz `version: 0.1.0` e `sdk: ">=0.1.0 <0.2.0"`, e o `add` dos exemplos usa `@v0.1.0`
   - **Faixa `sdk`:** na série estável, `>=X.0.0 <(X+1).0.0` com o limite inferior igual ao SDK do `go.mod` (pedido da FDD 20 à 14); na série 0, `>=0.N.0 <0.(N+1).0`, porque a faixa não atravessa minor (FDD 01)
   - **Desenvolvimento:** o `go.work` da raiz liga o exemplo ao SDK do mesmo commit; a CI do SDK roda os testes do exemplo nesse modo em todo PR (validação das pré-releases, ADR-021) e, na tag, de novo com `GOWORK=off` contra o SDK publicado
   - **Manifesto:** fase só `transform` (o hook só adiciona header e nega; não altera rota); `default_order: 50`; `default_failure: open` (o header não é essencial; quem usa o `deny_path` como controle de acesso põe `failure: closed` na instância, como faz o `n3x.yaml` de referência do HLD do sidecar); sem dependências; metade de controller opcional
@@ -286,7 +304,7 @@ GOWORK=off go test -race ./...    # dentro de example/, na tag
 
   const (
       HeaderValue        = "1"              // valor fixo do header (L-54)
-      DenyMessage        = "bloqueado"      // corpo HTTP e grpc-message da negação
+      DenyMessage        = "bloqueado"      // "message" do corpo JSON HTTP (FDD 05) e grpc-message da negação
       ReportInterval     = 10 * time.Second // entre relatórios
       ReportIdleInterval = 60 * time.Second // depois de UNIMPLEMENTED
       PruneInterval      = 1 * time.Minute  // tarefa prune do controller
@@ -378,6 +396,7 @@ func TestSchemaGolden(t *testing.T) {
   - gRPC: o `:path` é `/<pacote.Serviço>/<Método>`; `deny_path: /pedidos.v1.Pedidos/Excluir` nega só esse método; `deny_path: /pedidos.v1.Pedidos` nega o serviço inteiro
   - `/` nega tudo; vazio não nega nada
   - a negação descarta a mudança de header da própria instância (FDD 05)
+  - corpo da negação em HTTP (FDD 05): JSON `{"code":403,"message":"bloqueado"}` (34 bytes) com `content-type: application/json; charset=utf-8`; em gRPC o formato no fio não muda (trailers-only, `grpc-status: 7`, `grpc-message: bloqueado`)
 - Concorrência: o hook roda em paralelo nos workers do Envoy; estado mutável só em `sync/atomic` e na métrica; a instância nunca guarda o `Stream`
 
 **Exemplo de requisição**
@@ -395,7 +414,7 @@ _ = sdktest.ExpectNewError(t, agent.Plugin(), `{"deny_path":"/a/../b"}`)
 **Exemplo de resposta**
 ```json
 {
-  "GET /admin?x=1": { "Status": 403, "content-type": "text/plain; charset=utf-8", "Body": "bloqueado" },
+  "GET /admin?x=1": { "Status": 403, "content-type": "application/json; charset=utf-8", "content-length": 34, "Body": "{\"code\":403,\"message\":\"bloqueado\"}" },
   "GET /administrador": { "Forwarded": true, "x-n3x": "1" },
   "GET /pedidos/7 com X-N3X forjado": { "Forwarded": true, "x-n3x": "1" },
   "gRPC Excluir": { "Status": 200, "grpc-status": 7, "grpc-message": "bloqueado", "TrailersOnly": true, "DenyStatus": 403 },
@@ -450,6 +469,7 @@ n3x_n3x_example_reports_sent_total{plugin="n3x.example",instance="add-header",re
 - Método: gRPC unário `/n3x.plugins.n3x.example.v1.Example/Report`, só da tarefa
 - Semântica:
   - **Contagem fora do `Map`:** o total e o `seq` ficam em `sync/atomic.Uint64` da instância, porque o `Map` não tem incremento atômico e pode descartar itens (FDD 04); o `Map` guarda só o estado volátil do relatório, que tolera descarte: sem o item, a tarefa age como se fosse o primeiro envio e, no máximo, sai um log a mais
+  - **Leitura em dois atômicos:** a tarefa lê `total` e `seq` em dois atômicos separados, então um relatório pode levar um `total` um pouco mais novo que o `seq`; o controller só exige monotonicidade de `seq` e de `total` dentro do `boot_id`, o que continua valendo
   - **0 alocações no `Get` e no `Set`:** `K` e `V` de tamanho fixo; sobrescrever a mesma chave não aloca (FDD 04); portão `AssertZeroAllocsFunc` no `Get` (seção 9)
   - **Laço:** envia, atualiza o estado e espera; erro de `proxy.Sleep` (cancelamento) encerra; panic reinicia com o backoff do SDK e o `seq` continua do contador atômico
   - **Logs** (pelo `env.Log()`, com `plugin_id` e `instance`; nunca com header, path da requisição ou corpo):
@@ -463,7 +483,7 @@ n3x_n3x_example_reports_sent_total{plugin="n3x.example",instance="add-header",re
 
 **Exemplo de requisição**
 ```go
-p := sdktest.NewProxy(t, agent.Plugin(), cfg, sdktest.WithFakeController())
+p := sdktest.NewProxy(t, agent.Plugin(), cfg, sdktest.Name("add-header"), sdktest.WithFakeController())
 p.Controller().Handle("/n3x.plugins.n3x.example.v1.Example/Report", reportOK)
 p.Request(sdktest.GET("/admin/x"))
 p.Scheduler().Advance(10 * time.Second)
@@ -476,12 +496,12 @@ p.Scheduler().Advance(2 * time.Minute)
 ```json
 {
   "calls": [
-    { "Req": { "plugin_instance": "example", "boot_id": "9f2c41d07a5be318", "seq": 1, "denies_total": 0, "deny_path": "/admin/" }, "At": "2026-01-01T00:00:00Z", "Code": "OK" },
-    { "Req": { "plugin_instance": "example", "boot_id": "9f2c41d07a5be318", "seq": 2, "denies_total": 1, "deny_path": "/admin/" }, "At": "2026-01-01T00:00:10Z", "Code": "OK" }
+    { "Req": { "plugin_instance": "add-header", "boot_id": "9f2c41d07a5be318", "seq": 1, "denies_total": 0, "deny_path": "/admin/" }, "At": "2026-01-01T00:00:00Z", "Code": "OK" },
+    { "Req": { "plugin_instance": "add-header", "boot_id": "9f2c41d07a5be318", "seq": 2, "denies_total": 1, "deny_path": "/admin/" }, "At": "2026-01-01T00:00:10Z", "Code": "OK" }
   ],
   "logs depois do SetDown": [
-    "{\"level\":\"warn\",\"component\":\"plugin\",\"msg\":\"report_failed\",\"plugin_id\":\"n3x.example\",\"instance\":\"example\",\"code\":\"Unavailable\",\"failures\":1}",
-    "{\"level\":\"warn\",\"component\":\"plugin\",\"msg\":\"report_failed\",\"plugin_id\":\"n3x.example\",\"instance\":\"example\",\"code\":\"Unavailable\",\"failures\":7}"
+    "{\"level\":\"warn\",\"component\":\"plugin\",\"msg\":\"report_failed\",\"plugin_id\":\"n3x.example\",\"instance\":\"add-header\",\"code\":\"Unavailable\",\"failures\":1}",
+    "{\"level\":\"warn\",\"component\":\"plugin\",\"msg\":\"report_failed\",\"plugin_id\":\"n3x.example\",\"instance\":\"add-header\",\"code\":\"Unavailable\",\"failures\":7}"
   ],
   "n3x_n3x_example_reports_sent_total{result=\"error\"}": 12
 }
@@ -590,9 +610,9 @@ p.Scheduler().Advance(2 * time.Minute)
   }
 
   const (
-      MaxTrackedServices     = 1024 // hipótese
-      MaxInstancesPerService = 1024 // hipótese
-      MaxTrackedInstances    = 4096 // hipótese
+      MaxTrackedServices     = 1024 // confirmado
+      MaxInstancesPerService = 1024 // confirmado
+      MaxTrackedInstances    = 4096 // confirmado
   )
   ```
 - Método: n/a
@@ -603,7 +623,7 @@ p.Scheduler().Advance(2 * time.Minute)
   - **Retenção:** `instances` gravado com `SetWithTTL(cfg.Retention)` a cada relatório
   - **Limites:** `MaxTrackedServices`, `MaxInstancesPerService` e `MaxTrackedInstances` (contados pelos índices); acima, `RESOURCE_EXHAUSTED` e `env.State().Degraded("limite de instâncias acompanhadas atingido")`; volta a `OK()` no `prune` quando o uso cai a 90% ou menos
   - **Concorrência:** escrita (`Report`, `zerar`, `prune`) sob um `sync.Mutex`; leitura (cartão, páginas) sem trava, aceitando um retrato levemente atrasado
-  - **Memória estimada:** cerca de 400 bytes por instância acompanhada (chave e registro com textos curtos) mais as listas; 4.096 instâncias cabem em menos de 4 MiB (hipótese, conferida em teste com `PluginView.Memory()`)
+  - **Memória estimada:** cerca de 400 bytes por instância acompanhada (chave e registro com textos curtos) mais as listas; 4.096 instâncias cabem em menos de 4 MiB (confirmado, conferida em teste com `PluginView.Memory()`)
 
 **Exemplo de requisição**
 ```go
@@ -668,7 +688,7 @@ n3x_n3x_example_tracked_instances{plugin="n3x.example"} 1
 
   func (e *Example) cardNegacoes(ctx context.Context) (ui.Widget, error) {
       return ui.Stat{Label: "Negações", Value: ui.FormatInt(int64(e.snapshot().Total)),
-          Hint: e.hint}, nil // texto montado no New, ex.: "instâncias com relatório nas últimas 24 h"
+          Hint: e.hint}, nil // texto montado no New a partir de cfg.Retention, ex.: "instâncias com relatório nas últimas 24 h"
   }
 
   func (e *Example) Routes(r ctrl.Routes) {
@@ -680,7 +700,7 @@ n3x_n3x_example_tracked_instances{plugin="n3x.example"} 1
   ```
   ```go
   // Árvore de /negacoes (forma de referência)
-  ui.Page{Title: "Negações", Description: "Negações do deny_path por serviço, desde a última zeragem.",
+  ui.Page{Title: "Negações", Description: "Negações do deny_path por serviço, desde a última zeragem (instância que voltou depois de vencer ou ser descartada recontabiliza desde a subida).",
       Body: ui.Column{Children: []ui.Widget{
           ui.Refresh{ID: "resumo", Label: "Resumo", Child: ui.Column{Children: []ui.Widget{
               ui.Row{Children: []ui.Widget{
@@ -697,7 +717,7 @@ n3x_n3x_example_tracked_instances{plugin="n3x.example"} 1
                   },
                   Rows: linhas, // RowOf(LinkCell(s, ui.PluginPath("negacoes", s)), IntCell(n), IntCell(k), TimeCell(t))
                   Sort: ui.SortBy{Column: "negacoes", Desc: true},
-                  Export: []ui.Format{ui.CSV, ui.JSON},
+                  Export: []ui.Format{ui.CSV, ui.JSON}, // sem ExportAllowRead: exportar exige root (padrão da FDD 11)
                   EmptyText: "Nenhum relatório recebido ainda."},
           }}},
           ui.Action{Label: "Zerar contagem", To: ui.PluginPath("negacoes", "zerar"), Tone: ui.ToneDanger,
@@ -714,12 +734,14 @@ n3x_n3x_example_tracked_instances{plugin="n3x.example"} 1
 | `/plugins/n3x/example/negacoes/{servico}` | read | `Table` `instancias` ("Instâncias de <serviço>") com sidecar, instância do plugin, `deny_path`, negações, último relatório, `boot_id` (monoespaçado) e `FilterText` | serviço fora da gramática de `service` da FDD 15: `ErrBadRequest` (400); serviço sem registro: `ErrNotFound` (404) |
 | `/plugins/n3x/example/sobre` | read | `ui.ConfigDetail` da config do controller, intervalo de relatório, retenção, limites e pacote gRPC | nenhum |
 
-  - Exportação: `?servicos.export=csv|json` e `?instancias.export=csv|json`, arquivos `n3x-example-servicos.csv` e `n3x-example-instancias.json` (FDD 11)
+  - Exportação: `?servicos.export=csv|json` e `?instancias.export=csv|json`, arquivos `n3x-example-servicos.csv` e `n3x-example-instancias.json` (FDD 11). Exportar `Table` exige root por padrão e as tabelas `servicos` e `instancias` do exemplo **não** habilitam `ExportAllowRead`, para o exemplo mostrar o padrão seguro: o papel de leitura recebe 403 na exportação e a página dele não traz o link de exportação
+  - O texto "últimas 24 h" do cartão e da tela deriva de `cfg.Retention` (montado no `New`); com `retention: 6h` o texto muda para 6 h
+  - Ressalva de tela: uma instância cujo registro venceu ou foi descartado pela cota recontabiliza tudo desde a subida quando volta a reportar, apesar de a tela dizer "desde a última zeragem" (pendência não bloqueante; a ressalva fica no texto de ajuda da página)
   - O cartão e as páginas leem o mesmo retrato (`snapshot`), calculado na hora a partir dos índices (fluxo de leitura); nenhuma escrita na leitura
 
 **Exemplo de requisição**
 ```text
-GET /plugins/n3x/example/negacoes?servicos.export=csv
+GET /plugins/n3x/example/negacoes?servicos.export=csv    (sessão root, por exemplo ctrltest.As(ctrltest.Root("admin")))
 ```
 
 **Exemplo de resposta**
@@ -732,6 +754,8 @@ servico,negacoes,instancias,ultimo
 pedidos,3,2,2026-01-01 00:00:10 UTC
 estoque,0,1,2026-01-01 00:00:10 UTC
 ```
+
+Para o papel de leitura, a mesma requisição (`?servicos.export=csv` ou `?instancias.export=csv`) devolve 403 e a página não traz o link de exportação (as tabelas não habilitam `ExportAllowRead`, FDD 11).
 
 ---
 
@@ -803,7 +827,7 @@ Location: /plugins/n3x/example/negacoes
   { "name": "http1-segue", "request": { "protocol": "http1", "method": "GET", "path": "/pedidos/7" },
     "expect": { "denied": false, "status": 200, "upstream_headers": { "x-n3x": "1" } } },
   { "name": "http2-nega-com-query", "request": { "protocol": "http2", "method": "GET", "path": "/admin/usuarios?x=1" },
-    "expect": { "denied": true, "status": 403, "content_type": "text/plain; charset=utf-8", "body": "bloqueado",
+    "expect": { "denied": true, "status": 403, "content_type": "application/json; charset=utf-8", "body": "{\"code\":403,\"message\":\"bloqueado\"}",
       "metrics": { "n3x_plugin_denies_total{instance=\"add-header\",code=\"403\"}": 1 } } },
   { "name": "http1-fronteira", "request": { "protocol": "http1", "method": "GET", "path": "/administrador" },
     "expect": { "denied": false, "status": 200, "upstream_headers": { "x-n3x": "1" } } },
@@ -955,7 +979,7 @@ go test ./internal/repotest/ -run TestInventarioDoID
 
 ### 9. Critérios de aceite técnicos
 
-- **Negação e header (kit):** `TestNegaPath` do HLD passa (`GET /admin` com `deny_path: /admin` dá 403; `GRPC /pedidos.v1.Pedidos/Criar` recebe `X-N3X: 1`); com `deny_path: /admin/`, `/admin`, `/admin/`, `/admin/x` e `/admin?x=1` negados e `/administrador` seguido; header enviado pelo cliente trocado por `1`; `deny_path` vazio nunca nega
+- **Negação e header (kit):** `TestNegaPath` do HLD passa (`GET /admin` com `deny_path: /admin` dá 403 com `content-type: application/json; charset=utf-8` e corpo `{"code":403,"message":"bloqueado"}` (34 bytes); `GRPC /pedidos.v1.Pedidos/Criar` recebe `X-N3X: 1`); com `deny_path: /admin/`, `/admin`, `/admin/`, `/admin/x` e `/admin?x=1` negados e `/administrador` seguido; header enviado pelo cliente trocado por `1`; `deny_path` vazio nunca nega
 - **gRPC:** `deny-grpc` nega `/pedidos.v1.Pedidos/Excluir` com HTTP 200, `grpc-status: 7`, `grpc-message: bloqueado` e trailers-only, e encaminha `/pedidos.v1.Pedidos/Obter` com o header; `Status()` no fim da requisição é 403; o mesmo resultado com `sdktest.Target(sdktest.Istio131)`
 - **Casos:** os 5 casos de `testdata/cases.json` (no mínimo; o arquivo pode crescer) passam no kit com o fragmento `testdata/n3x/sidecar-plugins.yaml`
 - **`New`:** `header: host` dá erro com `errors.Is(err, proxy.ErrProtectedHeader)`; `header: x_n3x` dá `proxy.ErrInvalidHeader`; `deny_path` `admin`, `/a/../b`, `/a//b`, `/a?x` e `/a%2Fb` dão `ErrInvalidDenyPath`; config com campo desconhecido dá só `unknown_field`
@@ -964,9 +988,9 @@ go test ./internal/repotest/ -run TestInventarioDoID
 - **Relatório (kit de proxy):** com `WithFakeController`, 1 chamada logo depois de assentar e 1 a cada 10 s falsos; `seq` estritamente crescente; `denies_total` igual ao número de negações; com `SetDown(true)` por 2 min falsos, `report_failed` aparece 2 vezes (amostragem de 60 s) e `reports_sent_total{result="error"}` vale 12; ao religar, `report_recovered` uma vez; `UNIMPLEMENTED` estica o intervalo para 60 s
 - **Standalone:** sem controller, 0 chamadas, `report_disabled` uma vez por instância, nenhuma tarefa em `p.Scheduler().Pending()` e o tráfego igual ao dos casos
 - **Idempotência no controller:** com `h.Dial` como `Sidecar("pedidos","pedidos-0")`, um relatório repetido dá `accepted: false` e o cartão não muda; 1.000 relatórios repetidos e embaralhados de 3 instâncias, com 10% descartados, dão no cartão a soma dos últimos totais enviados, em 100 de 100 execuções; `boot_id` novo acumula o valor anterior; total menor no mesmo `boot_id` dá `INVALID_ARGUMENT`; `plugin_instance` inválido dá `INVALID_ARGUMENT`
-- **Duas metades ligadas (FDD 12):** `ctrltest.NewHost` mais `sdktest.NewProxy(..., ctrltest.Link(h, ctrltest.As(ctrltest.Sidecar("pedidos", "pedidos-0"))))`: 3 negações, `Advance(10 * time.Second)` e `h.Card("negacoes")` com o texto "Negações 3"; passa com `go test -race -count=100` e em menos de 50 ms de tempo real por execução
+- **Duas metades ligadas (FDD 12):** o teste fica em `internal/repotest` (pacote neutro, que pode importar `agent/` e `controller/` sem que `controller/` passe a depender de `agent/`; a regra de dependência vale para o código, não para este pacote de teste); `ctrltest.NewHost` mais `sdktest.NewProxy(..., ctrltest.Link(h, ctrltest.As(ctrltest.Sidecar("pedidos", "pedidos-0"))))`: 3 negações, `Advance(10 * time.Second)` e `h.Card("negacoes")` com o texto "Negações 3"; passa com `go test -race -count=100` e em menos de 50 ms de tempo real por execução
 - **Registro no host:** `Registered()` com `Services[ctrl.TableSidecar]` igual a `["n3x.plugins.n3x.example.v1.Example"]`, 3 páginas, 1 ação e 1 cartão; `Menu()` com "Negações" em `/plugins/n3x/example/negacoes`; `env.(ctrl.CoreEnv)` falso
-- **Páginas:** `/negacoes` com `Text()` contendo "Negações" e "pedidos" e golden em `controller/testdata/negacoes.txt`; `Polling("resumo")` devolve o fragmento e `RefreshEvery("resumo")` igual a 5 s; `?servicos.export=csv` com `Filename` `n3x-example-servicos.csv` e uma linha por serviço; `/negacoes/inexistente` dá 404 e `/negacoes/Pedidos!` dá 400; `uitest.Lint` sem problema em toda saída
+- **Páginas:** `/negacoes` com `Text()` contendo "Negações" e "pedidos" e golden em `controller/testdata/negacoes.txt`; `Polling("resumo")` devolve o fragmento e `RefreshEvery("resumo")` igual a 5 s; `?servicos.export=csv` como root (`ctrltest.As(ctrltest.Root("admin"))`) com `Filename` `n3x-example-servicos.csv` e uma linha por serviço, e `?instancias.export=json` como root com `n3x-example-instancias.json`; para o papel de leitura, `?servicos.export=csv` dá 403 e a página não contém o link de exportação (as tabelas não habilitam `ExportAllowRead`, FDD 11); `/negacoes/inexistente` dá 404 e `/negacoes/Pedidos!` dá 400; `uitest.Lint` sem problema em toda saída
 - **Zerar contagem:** `h.Page("/negacoes", ctrltest.As(ctrltest.Root("admin"))).Action("Zerar contagem").Submit()` dá 303; `Follow()` contém "Contagem zerada."; o cartão mostra "Negações 0" e, depois de mais 2 negações e 10 s, "Negações 2"; envio de leitura e sem `_csrf` dão 403 com as mensagens da FDD 11; `HasAction("Zerar contagem")` é falso para leitura
 - **Retenção e limites:** sem relatório por 24 h falsos mais 1 min, o cartão volta a 0 e `tracked_instances` a 0; com `MaxTrackedInstances` reduzido por teste interno, a instância seguinte recebe `RESOURCE_EXHAUSTED`, o estado vira `degraded` e volta a `ok` depois do `prune`
 - **Métricas:** `n3x_n3x_example_denies_total{path="/admin/"}` igual a `n3x_plugin_denies_total{code="403"}` da mesma instância depois de 1.000 negações; nenhum rótulo com path da requisição (conferido por `p.MetricNames()` e valores de rótulo)
@@ -975,8 +999,8 @@ go test ./internal/repotest/ -run TestInventarioDoID
 - **Proto:** `buf lint` sem erro; `buf breaking` contra a última tag `example/v*` (aviso antes da primeira tag estável); `make check` sem diferença em `git diff --exit-code`
 - **Repositório e molde:** `internal/repotest` aprova manifesto, namespace, pastas, versão igual à tag e faixa `sdk` igual ao `go.mod`; `TestInventarioDoID` aprova; `go list -deps ./agent/...` sem `controller/` nem `controller/ui`; `go list -deps ./types/...` só com biblioteca padrão e `plugin/`; apagar `controller/` e `proto/` numa cópia deixa `go test ./agent/...` verde
 - **Builder:** `n3x-plugin add github.com/giustech/n3x-sdk/example@<tag>` passa (FDD 19); a análise estática da FDD 24 dá 0 violações e 0 `//n3x:allow`
-- **Fuzzing:** `FuzzPlugin` com `sdktest.AddFuzzSeeds` por 5 minutos na CI noturna sem panic nem falta (hipótese de duração, igual às FDDs anteriores)
-- **CI:** `go test -race ./...` e o passo sem `-race` dos portões de alocação (FDD 07) verdes no `go.work` em todo PR do SDK e com `GOWORK=off` na tag; cobertura mínima de 85% de linhas em `agent/` e `controller/` (hipótese)
+- **Fuzzing:** `FuzzPlugin` com `sdktest.AddFuzzSeeds` por 5 minutos na CI noturna sem panic nem falta (confirmado, igual às FDDs anteriores)
+- **CI:** `go test -race ./...` e o passo sem `-race` dos portões de alocação (FDD 07) verdes no `go.work` em todo PR do SDK e com `GOWORK=off` na tag; cobertura mínima de 85% de linhas em `agent/` e `controller/` (confirmado)
 
 ---
 

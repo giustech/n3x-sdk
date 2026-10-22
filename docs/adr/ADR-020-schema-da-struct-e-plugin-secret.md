@@ -1,6 +1,6 @@
 # ADR-020: Schema gerado da struct, `plugin.Secret` e evolução só por adição
 
-Status: Aceito
+Status: Aceito (atualizado em 2026-10-22)
 Data: 2026-10-19
 
 ## Contexto
@@ -22,3 +22,12 @@ O schema da config é usado na validação do `n3x.yaml`, no mascaramento de seg
 
 ## Requisitos relacionados
 FR-001, FR-007, FR-012, FR-013 e FR-016; segurança nos requisitos não funcionais.
+
+## Atualização (2026-10-22)
+Decisões aprovadas na clarificação das FDDs SDK-01 a SDK-16:
+- `desc` é obrigatória e `json` é explícito em snake_case
+- Duração em texto Go; tamanho em base 1024
+- `plugin.Secret` fica atrás de ponteiro para string e mostra `***` em qualquer saída
+- AAD do controller: `n3x:v1:controller:<id do plugin>`; AAD do sidecar: `n3x:v1:<serviço>`
+- A evolução é só por adição dentro da major do plugin; na série 0.x, a mesma linha é a mesma minor
+- Código de build `N3X-B014`

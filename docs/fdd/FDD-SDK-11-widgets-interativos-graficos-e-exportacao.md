@@ -44,7 +44,7 @@ Esta entrevista achou cinco problemas novos:
 - htmx 2.0.x embutido e servido pelo host (FDD 10), com `includeIndicatorStyles`, `allowEval` e `allowScriptTags` desligados (L-38, fechada na FDD 35); esta FDD usa só o gatilho `every`, `hx-sync`, `hx-headers` com JSON puro e os cabeçalhos de resposta `HX-Redirect`, `HX-Retarget` e `HX-Reswap`
 - O cookie de sessão é `SameSite=Strict` (ADR-006 do `n3x-controller`), então requisição de outro site não leva a sessão
 - O host aplica sessão, CSRF e papel antes de chamar a função do plugin e repassa ao renderizador o token, o papel e o intervalo pelo `ui.Request` (FDD 10)
-- Poucas pessoas operam o painel ao mesmo tempo: até 10 abas abertas com polling (hipótese, para a FDD 51)
+- Poucas pessoas operam o painel ao mesmo tempo: até 10 abas abertas com polling (confirmado, para a FDD 51)
 
 **Restrições**
 - Nenhum JavaScript além do htmx servido pelo próprio controller; CSP `default-src 'self'` sem script nem estilo inline (PRD, HLD do `n3x-controller`)
@@ -62,13 +62,26 @@ Esta entrevista achou cinco problemas novos:
 - HLDs: `n3x-sdk/docs/HLD.md` (catálogo, segurança, exemplo do contrato de controller com `Refresh` e `Export`, riscos); `n3x-controller/docs/HLD.md` (fluxo do painel, CSRF em todo método que não é GET, `hx-trigger="every 5s"`, `panel.refresh_interval`, mapa de telas)
 - FDDs aplicadas: 01 (`plugin.ID`, `RoutePrefix`, `FieldError`, notação da L-34), 08 (`Routes`, `Role`, `PageFunc`, mapeamento de erro de página, `ui.Query`, `Registrar`), 10 (escritor, contextos, IDs, `Request`, `Result`, `Table`, `Code`, tema, `uitest`), 24 (funções de pacote puras e tabela M)
 - Lacunas do README:
-  - **L-53 fechada aqui:** o handler de `Form` (método POST) e de `Action` é registrado por um método novo, `ctrl.Routes.Action(path, papel, fn)`, na tabela por método e padrão preparada pela FDD 08. O widget aponta para o destino por `ui.PluginPath`; o papel zero vale root e é guardado como `RoleRoot`; o envio é navegação comum com POST/redirecionamento/GET e aviso de uso único (hipótese; contratos 4 a 6)
+  - **L-53 fechada aqui:** o handler de `Form` (método POST) e de `Action` é registrado por um método novo, `ctrl.Routes.Action(path, papel, fn)`, na tabela por método e padrão preparada pela FDD 08. O widget aponta para o destino por `ui.PluginPath`; o papel zero vale root e é guardado como `RoleRoot`; o envio é navegação comum com POST/redirecionamento/GET e aviso de uso único (confirmado; contratos 4 a 6)
   - **L-38 (fechada na FDD 35) recebe restrições:** nada desta FDD depende de estilo inline, de `eval` nem de script; o polling usa só `every`, `hx-sync` e `hx-headers` com JSON puro, sem `js:`; envios não usam htmx
   - **L-22 (fechada na FDD 10) aplicada:** os widgets novos usam o mesmo escritor e o mesmo tema; o tema ganha seis tokens de cor de série (contrato 7)
 - Pedidos de FDDs anteriores atendidos:
   - FDD 08 (P-03 dela): registro de `Form` e `Action` em `Routes`, papel zero como root e rota da exportação (contratos 5 e 8)
   - FDD 10 (P-01 dela): mesmo escritor, contextos e IDs (contrato 1); `CSRFToken`, `Root` e `RefreshInterval` do `Request` (contrato 9); chave `<id>.export` (contrato 8); `LinkCell` (contrato 3); `Refresh` como alvo de fragmento (contrato 2); botão de copiar o YAML decidido: sem botão na v1, com download sem JavaScript (contrato 8)
   - FDD 24: as funções de pacote desta FDD são puras, sem I/O, sem goroutine e sem panic; a única API só do host (`ui.ReadSubmission`) vai para a tabela M (contrato 6)
+
+**Decisões aprovadas na clarificação**
+- Exportação de `Table` (CSV e JSON) exige root por padrão; o campo novo `Table.ExportAllowRead` (padrão falso) libera a exportação também para o papel de leitura, tabela a tabela, porque o recorte pode ter dado pessoal em massa (IP e usuário, LGPD) que sairia da retenção de 24 h em memória do core e a auditoria formal só chega na v2; o link só é emitido para quem tem permissão e o host valida no servidor (403); o download de `Code` segue a mesma regra. O PRD (FR-008 e FR-013) precisa registrar que leitura não exporta por padrão
+- O polling do `Refresh` não renova a inatividade da sessão (cabeçalho `N3X-Refresh: 1`, requisito novo para a FDD 34): a aba aberta cai no login após o prazo de inatividade, e o retorno à mesma página é garantido pelo FR-008; o PRD precisa registrar que a sessão expira por inatividade e que o polling não conta como atividade
+- `ui.External` (link externo `https`) sai da v1: só `ui.PluginPath` e `ui.PluginPathOf` (links dentro do painel); `External` fica como adição futura em minor (seção 3, "Fora da v1")
+- `ModeExport`, `Request.Path` e `Request.Flash` entram no renderizador; `ChartBar` fica na v1 com contingência de adiar para minor (HLD)
+- O HLD (exemplo de `Routes`: `Refresh` e `Table` precisam de `ID`; `Export` por tabela) e o ADR-018 ("papel mínimo" contra `AllowRead`; exportação e CSRF ficam no host) devem ser atualizados no Workflow 3
+- As demais hipóteses numéricas, de teste e de baixo risco ficam aceitas como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Dependem de outros repositórios: FDD 34 (CSRF em tempo constante, aviso por sessão de 60 s com `TakeFlash`, não renovar a inatividade com `N3X-Refresh`, `HX-Redirect` no polling expirado, token mascarado contra BREACH); FDD 35 (rotas POST, `ModeExport` antes de fragmento, `Content-Disposition`, `no-store` e `nosniff`, 422 para `ErrOutputTooLarge`, CSP com `form-action 'self'`, `base-uri 'none'` e `frame-ancestors 'none'`, `historyCacheSize 0`, `HX-Retarget`); FDD 30 (`panel.refresh_interval` de 1 s a 10 min); FDDs 44 e 45 (exportação do inventário e decisão de não depender de `ChartBar`); FDDs 12, 13, 47, 48 e 51
+- Documentar: a pausa do `Refresh` não persiste entre páginas; quando a `PageFunc` falha durante o polling, o bloco mantém os dados antigos; o prefixo `'` do CSV e o JSON são formato para máquina; a ordem repetida de `path_format` nas regras de registro; rotular como exemplo de erro o exemplo do contrato 1 (`Form{ID:"vivo"}` com `AllowRead` em GET)
+- Divergências para o Workflow 3: PRD (leitura não exporta por padrão; polling não renova a sessão), HLD linhas 212, 218 e 146, ADR-018 (papel mínimo; templ só no host) e pacotes `controller/ui/uitest`
 
 ---
 
@@ -77,9 +90,9 @@ Esta entrevista achou cinco problemas novos:
 - **Envio seguro por construção.** Invariante: todo `<form method="post">` gerado tem exatamente um campo `_csrf` com o token da sessão e um `_return` dentro do prefixo do plugin; nenhum controle de envio sai para quem não é root quando o widget não tem `AllowRead`. Medida: `uitest.Lint` (regra `form_csrf`) sem problema em todos os golden e na galeria; 100% dos envios sem token ou com papel insuficiente recusados pelo host (FDDs 34 e 35) e pelo host falso (FDD 12).
 - **Nenhum JavaScript além do htmx.** Medida: 0 `<script>`, 0 atributo `style`, 0 `on*`, 0 `hx-on` e 0 atributo `hx-*` fora da lista do contrato 9 nos golden e na galeria; SVG sem `href`, `<use>`, `<image>`, `<foreignObject>` nem `<style>`.
 - **Polling que respeita o operador.** Invariante: o intervalo emitido nunca é menor que `panel.refresh_interval` nem maior que 10 min; todo bloco com polling tem o link de pausa (WCAG 2.2.2); só o elemento relógio leva o cabeçalho `N3X-Refresh`; no máximo 4 blocos `Refresh` por página.
-- **Destinos de link previsíveis.** Invariante: todo `href` gerado é `?...`, `#n3x-...`, um path dentro de `/plugins/<namespace>/<nome>/` ou `https://` com `rel="noopener noreferrer"`; nenhum outro esquema sai.
-- **Gráfico acessível e rápido.** Medida: todo `Chart` tem `<title>`, `<desc>` e tabela de dados; cores de série com contraste mínimo de 3:1 contra o fundo e contra a superfície, nos dois temas; linha com 6 séries de 200 pontos em até 1 ms por operação e até 40 alocações (hipótese).
-- **Exportação fiel e inofensiva.** Invariante: a exportação leva exatamente as linhas que passam nos filtros da query, na ordenação da query, sem paginação, até 10.000 linhas; nenhuma célula de texto do CSV começa com caractere de fórmula sem o prefixo `'`. Medida: 10.000 linhas por 8 colunas em até 30 ms (CSV) e 40 ms (JSON) por operação (hipótese).
+- **Destinos de link previsíveis.** Invariante: todo `href` gerado é `?...`, `#n3x-...` ou um path dentro de `/plugins/<namespace>/<nome>/`; nenhum outro esquema sai (link externo `https` fora da v1).
+- **Gráfico acessível e rápido.** Medida: todo `Chart` tem `<title>`, `<desc>` e tabela de dados; cores de série com contraste mínimo de 3:1 contra o fundo e contra a superfície, nos dois temas; linha com 6 séries de 200 pontos em até 1 ms por operação e até 40 alocações (confirmado).
+- **Exportação fiel e inofensiva.** Invariante: a exportação leva exatamente as linhas que passam nos filtros da query, na ordenação da query, sem paginação, até 10.000 linhas; nenhuma célula de texto do CSV começa com caractere de fórmula sem o prefixo `'`; o link e o botão de exportar só saem para quem tem permissão (root, ou leitura quando a tabela declara `ExportAllowRead`) e o host recusa os demais com 403 (confirmado). Medida: 10.000 linhas por 8 colunas em até 30 ms (CSV) e 40 ms (JSON) por operação (confirmado).
 - **Determinismo herdado.** Invariante: a mesma árvore com o mesmo pedido gera os mesmos bytes em HTML, SVG, CSV e JSON; o fragmento de um `Refresh` é igual ao trecho dele na página.
 - **Dado ruim não derruba a tela.** Invariante: destino de link inválido, intervalo fora da faixa, valor infinito, pontos demais e exportação indisponível viram aviso (`Notice`); só estrutura inválida falha.
 
@@ -89,12 +102,12 @@ Esta entrevista achou cinco problemas novos:
 
 **Incluído**
 - `ui.Refresh`: intervalo, piso pelo `panel.refresh_interval`, teto, pausa, alvo de fragmento, elemento relógio, regras de conteúdo e limite por página
-- `ui.Href`, `ui.Link` e `ui.LinkCell`: destinos permitidos (página do próprio plugin, página de outro plugin, site externo `https`) e atributos de segurança
+- `ui.Href`, `ui.Link` e `ui.LinkCell`: destinos permitidos (página do próprio plugin e página de outro plugin; link externo `https` fora da v1) e atributos de segurança
 - `ui.Form` (métodos POST e GET, cinco tipos de campo, valores fixos, confirmação, visibilidade por papel) e `ui.Action` (botão de envio com confirmação)
 - Registro do handler de envio: `ctrl.Routes.Action`, `ctrl.ActionFunc` e `ctrl.ActionEntry` (L-53)
 - Resposta do envio: `ui.Reply` (`Done`, `DoneAt`, `Rejected`), campos reservados do formulário, `ui.ReadSubmission`, `Submission.Finish`, `ui.Flash` e o contrato HTTP do POST que o host implementa
 - `ui.Chart` de linha e de barra em SVG gerado no servidor, com escala automática, limites, cores do tema, resumo automático e tabela de dados
-- Exportação: `ui.Format`, campo `Table.Export`, campos `Code.ID` e `Code.Download`, `Query.Export`, modo `ModeExport`, formatos CSV e JSON, nome do arquivo, cabeçalhos HTTP e neutralização de fórmulas
+- Exportação: `ui.Format`, campos `Table.Export` e `Table.ExportAllowRead`, campos `Code.ID` e `Code.Download`, `Query.Export`, modo `ModeExport`, formatos CSV e JSON, nome do arquivo, cabeçalhos HTTP e neutralização de fórmulas
 - Ampliação do contrato do renderizador da FDD 10: campos `Request.Path` e `Request.Flash`, campos `Result.MediaType` e `Result.Filename`, opção `MaxExportBytes`, tags, atributos, URLs e atributos htmx novos, regras e avisos novos
 - Apoio a testes: `ui.ActionTargets`, regras novas do `uitest.Lint` e páginas novas da `uitest.Gallery`
 
@@ -105,7 +118,7 @@ Esta entrevista achou cinco problemas novos:
 - Ações do core sobre usuários ou configs: fora da v1 (ADR-003 do `n3x-plugin-core`)
 - SSE ou conexão aberta: fora da v1 (ADR-008 do `n3x-controller`)
 - Simulação no host falso: FDD 12 (SDK-12); telas concretas do core: FDDs 44 (CORE-08) e 45 (CORE-09)
-- Fora da v1, por adição em minor se houver caso real (hipótese): envio por htmx com troca parcial, botão de copiar com JavaScript, ação por linha de tabela (`ActionCell`), campo de senha, seleção múltipla, envio de arquivo, carimbo "atualizado às" no `Refresh`, eixo de tempo contínuo, gráfico de área, pizza ou empilhado, exclusão de coluna da exportação, limite de taxa da exportação
+- Fora da v1, por adição em minor se houver caso real (confirmado): link externo `https` (`ui.External`, com `rel="noopener noreferrer"` e regra de lint própria), envio por htmx com troca parcial, botão de copiar com JavaScript, ação por linha de tabela (`ActionCell`), campo de senha, seleção múltipla, envio de arquivo, carimbo "atualizado às" no `Refresh`, eixo de tempo contínuo, gráfico de área, pizza ou empilhado, exclusão de coluna da exportação, limite de taxa da exportação
 
 ---
 
@@ -143,11 +156,11 @@ Esta entrevista achou cinco problemas novos:
 - Se o formulário não estiver na árvore (ou estiver escondido para o papel), a mensagem e a lista de problemas aparecem no aviso do topo da página
 
 **Fluxo 4: exportação de uma tabela**
-1. A tabela declara `Export: []ui.Format{ui.CSV, ui.JSON}`. Em modo página, o renderizador emite, acima da tabela, os links "Exportar CSV" e "Exportar JSON" para `?<query atual>&<id>.export=csv`, sem htmx.
-2. O operador ativa o link. O host vê a chave pelo `q.Export()` e escolhe `ModeExport` antes de qualquer regra de fragmento (pedido à FDD 35). Sessão e papel são os da página; o prazo é o da página (10 s); a chamada é a mesma `PageFunc`, com a mesma `ui.Query`.
+1. A tabela declara `Export: []ui.Format{ui.CSV, ui.JSON}`. Em modo página, o renderizador emite, acima da tabela, os links "Exportar CSV" e "Exportar JSON" para `?<query atual>&<id>.export=csv`, sem htmx, só se `Request.Root` for verdadeiro ou a tabela tiver `ExportAllowRead` (confirmado); para leitura sem `ExportAllowRead` os links não saem.
+2. O operador ativa o link. O host vê a chave pelo `q.Export()`, confere o papel (root, ou leitura quando a tabela declara `ExportAllowRead`; senão 403 com "Esta exportação exige o papel root.") e escolhe `ModeExport` antes de qualquer regra de fragmento (pedido à FDD 35). A sessão é a da página; o prazo é o da página (10 s); a chamada é a mesma `PageFunc`, com a mesma `ui.Query`.
 3. O renderizador valida a árvore como numa página, acha a `Table` pelo ID, aplica os filtros e a ordenação da query a todas as linhas entregues, sem paginar, e escreve CSV ou JSON num buffer de até 16 MiB, conferindo o `ctx` a cada 1.000 linhas.
 4. O `Result` traz `Mode: ModeExport`, `MediaType`, `Filename` e `Rows`. O host responde 200 com `Content-Type`, `Content-Disposition: attachment`, `Cache-Control: no-store` e `X-Content-Type-Options: nosniff`, e loga `panel_export`.
-5. Download de `Code` (FR-007): o mesmo caminho, com `Code{ID: "cfg", Download: true}` e o valor da chave igual ao formato do `Lang` (`yaml`, `json`, `diff` ou `txt`).
+5. Download de `Code` (FR-007): o mesmo caminho e a mesma regra de papel (root por padrão), com `Code{ID: "cfg", Download: true}` e o valor da chave igual ao formato do `Lang` (`yaml`, `json`, `diff` ou `txt`).
 
 **Fluxo 5: formulário GET (parâmetros da própria página)**
 - `ui.Form{Method: ui.MethodGet}` vira `<form method="get" action="?">` sem htmx, com campos ocultos para os outros parâmetros da query atual (menos os campos do próprio formulário e as chaves `<id>.export`), como os filtros da FDD 10
@@ -156,13 +169,13 @@ Esta entrevista achou cinco problemas novos:
 
 **Fluxo 6: link**
 - `ui.Link{Label, To}` vira `<a class="n3x-link" href="...">` sem htmx: navegação comum para a página de destino
-- Destino externo leva `rel="noopener noreferrer"`, abre na mesma aba e tem o texto "(site externo)" só para leitor de tela
+- Só há destino dentro do painel (`PluginPath` e `PluginPathOf`); link externo `https` está fora da v1
 
 **Fluxo 7: gráfico**
 - O renderizador valida a estrutura (tipo, séries, número de valores por série), corta pontos acima do limite com aviso, troca valores infinitos por "sem valor" com aviso, calcula a escala, desenha grade, eixos e séries em coordenadas com uma casa decimal e emite `<figure>` com título visível, SVG (`role="img"` com `<title>` e `<desc>`), legenda e a tabela de dados dentro de `<details>`
 
 **Fluxos alternativos e exceções**
-- **Sessão expirada durante o polling:** o host responde à requisição do relógio com `HX-Redirect: /login?next=<path e query de HX-Current-URL>` (qualquer status); o htmx navega para o login e, depois do login, o operador volta à mesma página (FR-008). Sem htmx não há polling (pedido às FDDs 34 e 35)
+- **Sessão expirada durante o polling:** como o polling não renova a inatividade (confirmado), uma aba aberta e sem uso do operador expira no prazo de inatividade. O host responde à requisição do relógio com `HX-Redirect: /login?next=<path e query de HX-Current-URL>` (qualquer status); o htmx navega para o login e, depois do login, o operador volta à mesma página (FR-008). Sem htmx não há polling (pedido às FDDs 34 e 35)
 - **Polling com erro (500, 504) ou sem resposta:** o htmx 2 não troca o conteúdo em resposta 4xx ou 5xx; os dados anteriores continuam na tela e o relógio continua contando
 - **Bloco `Refresh` que sumiu da árvore:** o renderizador devolve a página com `Retargeted` (FDD 10) e o host manda `HX-Retarget: #n3x-page`
 - **Pausa:** com `<id>.refresh=off` na query, o bloco sai sem relógio, com o texto "Atualização automática pausada." e o link "Retomar", que tira a chave. O estado fica na URL e sobrevive a recarga; valor diferente de `off` gera `query_ignored`
@@ -174,6 +187,7 @@ Esta entrevista achou cinco problemas novos:
 - **`_return` ausente ou fora do prefixo do plugin:** o destino vira `/` (visão geral)
 - **`DoneAt` para fora do plugin:** ignorado; o destino é o `_return`
 - **Exportação indisponível** (tabela fora da árvore, formato não habilitado, mais de 10.000 linhas entregues, `Code` sem `Download`): o renderizador devolve a página com `Result.Mode = ModePage` e o aviso `export_unavailable`; o host responde a página normal
+- **Exportação por leitura sem `ExportAllowRead`:** o host responde 403 com "Esta exportação exige o papel root." (e `panel_action_refused`/`reason=forbidden`), mesmo que o link tenha sido digitado à mão
 - **Exportação acima de 16 MiB:** `ErrOutputTooLarge`, nada escrito; o host responde 422 com "Recorte grande demais para exportar; use os filtros." (pedido à FDD 35)
 - **Duplo clique no botão de envio:** dois POSTs; o handler deve ser idempotente (guia do autor, FDD 47); o SDK não deduplica na v1
 - **Aviso de uso único disputado por outra aba:** o polling e os fragmentos nunca consomem o aviso; só uma página inteira com o mesmo path consome
@@ -325,7 +339,7 @@ stateDiagram-v2
 
   - **Alvo dos controles dentro de `Refresh`:** todo link `?` gerado dentro de um bloco `Refresh` (paginação, ordenação, abas, pausa) usa `hx-target="#n3x-p-<id do Refresh>"`. Assim, o bloco volta inteiro, com o relógio apontando para a query nova; sem isso, o próximo polling desfaria a página escolhida
 
-**Exemplo de requisição**
+**Exemplo de requisição** (exemplo de erro, inválido de propósito: aninha `Refresh`, põe controle de entrada em `Refresh`, `Chart` em contexto compacto, repete o ID `vivo` e usa `AllowRead` em formulário GET)
 ```go
 ui.Page{Title: "Cotas", Body: ui.Column{Children: []ui.Widget{
     ui.Refresh{ID: "vivo", Child: ui.Column{Children: []ui.Widget{
@@ -368,10 +382,10 @@ Page.Body.Children[2].AllowRead: só vale em formulário POST [form_method]
 - Método: o polling é `GET` na mesma rota da página, com `HX-Request: true`, `HX-Target: n3x-p-<id>` e `N3X-Refresh: 1`
 - Semântica de status/headers:
   - **Intervalo efetivo:** `e = Every`, ou `Request.RefreshInterval` se `Every` for zero; `e` menor que `RefreshInterval` sobe para ele e `e` acima de `MaxRefreshEvery` desce para 10 min, os dois com o aviso `refresh_clamped`; o valor emitido é `every <segundos>s`, arredondado para cima. O plugin pode pedir um intervalo maior que o do operador, nunca menor (o `panel.refresh_interval` é o piso e o padrão, ADR-008)
-  - **Teto por página:** no máximo 4 blocos `Refresh` na árvore (`too_many`), porque cada bloco é uma chamada inteira da `PageFunc` por intervalo e por aba aberta (hipótese, medida na FDD 51)
+  - **Teto por página:** no máximo 4 blocos `Refresh` na árvore (`too_many`), porque cada bloco é uma chamada inteira da `PageFunc` por intervalo e por aba aberta (confirmado, medida na FDD 51)
   - **Elemento relógio:** um `<span class="n3x-refresh__tick">` vazio, último filho do bloco, irmão do conteúdo. Só ele leva `hx-get`, `hx-trigger`, `hx-sync="this:drop"` e `hx-headers`. Como os atributos do htmx são herdados por descendentes, pôr o polling no próprio bloco marcaria com `N3X-Refresh` também os cliques do operador
   - **`hx-sync="this:drop"`:** um polling não começa enquanto o anterior do mesmo relógio não terminou
-  - **Cabeçalho `N3X-Refresh: 1`:** o host não conta a requisição como uso para a inatividade da sessão, não entrega aviso de uso único e mede à parte (pedidos às FDDs 34 e 35). A sessão continua obrigatória e o prazo absoluto continua valendo
+  - **Cabeçalho `N3X-Refresh: 1`:** o host não renova a inatividade da sessão com essa requisição (requisito novo para a FDD 34, confirmado), não entrega aviso de uso único e mede à parte (pedidos às FDDs 34 e 35). A sessão continua obrigatória e o prazo absoluto continua valendo. Consequência: uma aba aberta cai no login após o prazo de inatividade (`HX-Redirect`), e o retorno à mesma página é garantido pelo FR-008; o polling não conta como atividade
   - **Pausa (WCAG 2.2.2):** a barra do bloco mostra "Atualização automática a cada 5s." e o link "Pausar" (`?<query>&<id>.refresh=off`); pausado, o bloco sai sem relógio, com "Atualização automática pausada." e o link "Retomar" (query sem a chave). Os dois links trocam o próprio bloco, com `hx-push-url="true"`, e funcionam sem JavaScript
   - **Leitor de tela:** o bloco não é `aria-live`; atualização a cada poucos segundos não é anunciada
   - **Conteúdo proibido:** `Form`, `Action` e `Table` com `Filters` dentro do bloco (`refresh_input`), porque o polling trocaria o que o operador está digitando ou fecharia a confirmação aberta. Paginação, ordenação, abas, links e exportação são permitidos
@@ -400,11 +414,10 @@ ui.Refresh{ID: "resumo", Label: "Resumo", Every: 2 * time.Second,
 - Assinatura/Rota:
   ```go
   // Href é um destino de link ou de envio. Opaco; o valor zero é "sem destino".
-  type Href struct{ /* tipo, plugin, segmentos, parâmetros ou URL externa */ }
+  type Href struct{ /* tipo, plugin, segmentos e parâmetros */ }
 
   func PluginPath(segments ...string) Href                 // página do próprio plugin
   func PluginPathOf(id plugin.ID, segments ...string) Href // página de outro plugin do painel
-  func External(rawURL string) Href                        // site externo, só https
   func (h Href) With(key, value string) Href               // acrescenta um parâmetro de query (cópia)
   func (h Href) IsZero() bool
 
@@ -420,7 +433,7 @@ ui.Refresh{ID: "resumo", Label: "Resumo", Every: 2 * time.Second,
 - Semântica:
   - **Página de plugin:** `/plugins/<namespace>/<nome>/` mais os segmentos, cada um escapado com `url.PathEscape`, unidos por `/`. `PluginPath` usa `Request.Plugin`; sem segmentos, é a raiz do plugin. Qualquer texto vira segmento seguro (ex.: um nome de instância); segmento vazio, `.`, `..`, acima de 256 bytes, com UTF-8 inválido ou caractere de controle é inválido
   - **Parâmetros:** `With` acrescenta pares na ordem de chamada; a URL sai com `url.Values.Encode` (chaves em ordem). Chaves com `.` são aceitas, para um cartão apontar para uma tabela já filtrada (ex.: `sidecars.f.estado=desconectado`). Até 16 pares, chave de 1 a 64 bytes, valor até 1024 bytes
-  - **Externo (hipótese):** só `https`, com host, sem usuário e senha, sem espaço nem caractere de controle, até 2048 bytes; sai normalizado por `url.URL.String()`, com `rel="noopener noreferrer"`, na mesma aba (sem `target`), com a classe `n3x-link--external` e o texto "(site externo)" só para leitor de tela. Não há `http`, `mailto`, `javascript` nem `data`
+  - **Sem destino externo (confirmado):** a v1 não tem `ui.External`; não há `https`, `http`, `mailto`, `javascript` nem `data`, e o `Href` só aponta para páginas do painel. `External` fica como adição futura em minor (seção 3, "Fora da v1")
   - **Outros painéis do host** (visão geral, login): fora do `Href` na v1; o menu já leva a eles
   - **Inválido é dado, não estrutura:** `Href` com conteúdo inválido não derruba a página: o link sai como texto simples e gera o aviso `link_invalid`. Só o `Href` zero onde ele é obrigatório é erro (`required`)
   - **Construtores puros:** nenhum construtor faz panic nem valida na hora; a validação acontece na renderização (pedido da FDD 24)
@@ -431,8 +444,7 @@ ui.Column{Children: []ui.Widget{
     ui.Link{Label: "Sidecars desconectados", To: ui.PluginPathOf(plugin.MustParseID("n3x.core"), "sidecars").
         With("sidecars.f.estado", "desconectado")},
     ui.Link{Label: "Detalhe de pedidos", To: ui.PluginPath("servicos", "pedidos")},
-    ui.Link{Label: "Painel no Grafana", To: ui.External("https://grafana.exemplo.com.br/d/n3x?orgId=1")},
-    ui.Link{Label: "Intranet", To: ui.External("http://intranet/x")},
+    ui.Link{Label: "Intranet", To: ui.PluginPath("..", "x")},
 }}
 ```
 
@@ -441,7 +453,6 @@ ui.Column{Children: []ui.Widget{
 <div class="n3x-column n3x-gap-md">
 <a class="n3x-link" href="/plugins/n3x/core/sidecars?sidecars.f.estado=desconectado">Sidecars desconectados</a>
 <a class="n3x-link" href="/plugins/n3x/example/servicos/pedidos">Detalhe de pedidos</a>
-<a class="n3x-link n3x-link--external" href="https://grafana.exemplo.com.br/d/n3x?orgId=1" rel="noopener noreferrer">Painel no Grafana<span class="n3x-sr-only"> (site externo)</span></a>
 <span class="n3x-text">Intranet</span>
 </div>
 ```
@@ -508,12 +519,12 @@ ui.Column{Children: []ui.Widget{
   ```
 - Método: `Form` POST e `Action` geram `<form method="post">` comum, sem htmx; `Form` GET gera `<form method="get" action="?">`, sem htmx
 - Semântica:
-  - **Destino:** `To` precisa ser `PluginPath` (ou `PluginPathOf` com o próprio ID); `External` ou outro plugin dá `action_target`. O path montado tem de casar com um padrão registrado por `Routes.Action`; o host falso confere (FDD 12), o real responde 404 ou 405
+  - **Destino:** `To` precisa ser `PluginPath` (ou `PluginPathOf` com o próprio ID); outro plugin dá `action_target`. O path montado tem de casar com um padrão registrado por `Routes.Action`; o host falso confere (FDD 12), o real responde 404 ou 405
   - **Campos reservados:** todo POST visível leva, antes do `<fieldset>`, os ocultos `_csrf` (de `Request.CSRFToken`), `_form` (só `Form`, com o ID) e `_return` (`Request.Path` mais `?` e a query atual sem chaves `<id>.export`; acima de 2048 bytes, só o path). Depois vêm os `Param`
-  - **Visibilidade (hipótese):** com `Request.Root` falso e `AllowRead` falso, o renderizador não emite o controle. Isso é apresentação: quem autoriza é o host, pelo papel registrado em `Routes.Action` (FR-008: "bloqueada também no servidor"). O host falso confere que `AllowRead` bate com o papel registrado (`RoleRead` contra o zero ou `RoleRoot`)
+  - **Visibilidade (confirmado):** o modelo é `AllowRead bool` no widget mais o papel registrado em `Routes.Action`, sem campo `Role` no widget (papel zero = root); o HLD e o ADR-018 ("papel mínimo") devem alinhar o texto no Workflow 3. Com `Request.Root` falso e `AllowRead` falso, o renderizador não emite o controle. Isso é apresentação: quem autoriza é o host, pelo papel registrado em `Routes.Action` (FR-008: "bloqueada também no servidor"). O host falso confere que `AllowRead` bate com o papel registrado (`RoleRead` contra o zero ou `RoleRoot`)
   - **Pedido incompleto:** se a saída tem algum POST visível e `CSRFToken` está vazio ou fora do formato (16 a 256 bytes ASCII imprimíveis, sem espaço), ou `Path` está vazio ou fora de `Plugin.RoutePrefix()`, a renderização devolve `ErrInvalidRequest` sem escrever nada
-  - **Confirmação (hipótese):** com `Confirm`, o botão vira `<details class="n3x-confirm">`, com o `<summary>` no lugar do botão e, dentro, o texto e o botão "Confirmar: <rótulo>". Nativo, acessível por teclado, sem JavaScript e sem `hx-confirm`
-  - **Campos:** `<fieldset>` com `<legend>`; cada campo com `<label for>`; `Help` em `<p class="n3x-help">` ligado por `aria-describedby`; `Required` gera `required="required"` e a marca visual "*" (oculta para leitor de tela, porque o `required` já é anunciado), com a nota "Campos com * são obrigatórios." no topo; texto, número e área de texto com `maxlength="1024"`; `FieldNumber` usa `type="text"` e `inputmode="numeric"`, sem setas nem rolagem acidental (padrão do GOV.UK, hipótese); valor de seleção fora das opções deixa nenhuma opção marcada
+  - **Confirmação (confirmado):** com `Confirm`, o botão vira `<details class="n3x-confirm">`, com o `<summary>` no lugar do botão e, dentro, o texto e o botão "Confirmar: <rótulo>". Nativo, acessível por teclado, sem JavaScript e sem `hx-confirm`
+  - **Campos:** `<fieldset>` com `<legend>`; cada campo com `<label for>`; `Help` em `<p class="n3x-help">` ligado por `aria-describedby`; `Required` gera `required="required"` e a marca visual "*" (oculta para leitor de tela, porque o `required` já é anunciado), com a nota "Campos com * são obrigatórios." no topo; texto, número e área de texto com `maxlength="1024"`; `FieldNumber` usa `type="text"` e `inputmode="numeric"`, sem setas nem rolagem acidental (padrão do GOV.UK, confirmado); valor de seleção fora das opções deixa nenhuma opção marcada
   - **Estado recusado:** com `Request.Flash` de um `Rejected` cujo ID é o do `Form`, o renderizador mostra o resumo `n3x-p-<form>-errors` com `role="alert"` e links `#n3x-p-<form>-in-<campo>`, marca os campos com `aria-invalid="true"`, liga a mensagem por `aria-describedby` e preenche os valores enviados
   - **GET:** sem `_csrf`, `_form` e `_return`; campos ocultos com os outros parâmetros da query atual (menos os nomes dos campos e as chaves `<id>.export`); cada campo vem preenchido pela query, se houver, senão por `Field.Value`. `To`, `Confirm` e `AllowRead` em GET dão `form_method`
   - **Botões:** `<button type="submit" class="n3x-button">`; `Action` com `Tone` ganha `n3x-tone-<tom>`; o texto é sempre visível
@@ -591,7 +602,7 @@ ui.Column{Children: []ui.Widget{
 
   func (r *Registrar) Actions() []ActionEntry // cópia, na ordem de registro
 
-  const MaxActions = 32 // por plugin (hipótese)
+  const MaxActions = 32 // por plugin (confirmado)
   ```
 - Método: `POST`; o host responde 405 com `Allow` para outro método num padrão só de ação
 - Semântica:
@@ -599,7 +610,7 @@ ui.Column{Children: []ui.Widget{
   - **Gramática e posse:** a mesma de `Page` (FDD 08): path relativo ao prefixo, curingas `{nome}` (até 4), checagem por `id.OwnsRoute`. O widget aponta para um path concreto (`ui.PluginPath("limites", "pedidos", "zerar")`), que casa com o padrão `/limites/{service}/zerar`
   - **Tabela por método e padrão (FDD 08):** uma página GET e uma ação POST podem ter o mesmo padrão; duas ações com o mesmo esqueleto não
   - **Papel:** o valor zero vale root e vira `RoleRoot` no `ActionEntry`, então o host nunca vê zero; `RoleSidecar`, `RolePlugin` e valores inválidos dão `invalid_role`
-  - **Regras de registro** (um problema por chamada, nesta ordem): `invalid_role`, `nil_handler`, `path_format` (vazio, sem barra inicial ou acima de 256 bytes), `foreign_route`, `path_format` (gramática), `duplicate_route`, `too_many`. Caminho do problema: `actions["<path>"]` (notação da L-34). `Registrar.Close()` devolve esses problemas junto com os de páginas e cartões, com `ErrRegistration`
+  - **Regras de registro** (um problema por chamada, nesta ordem): `invalid_role`, `nil_handler`, `path_format` (vazio, sem barra inicial ou acima de 256 bytes), `foreign_route`, `path_format` (gramática), `duplicate_route`, `too_many` (`path_format` aparece duas vezes na ordem de propósito: primeiro o formato básico do texto, depois a gramática do padrão, depois da posse). Caminho do problema: `actions["<path>"]` (notação da L-34). `Registrar.Close()` devolve esses problemas junto com os de páginas e cartões, com `ErrRegistration`
   - **Prazo e chamador:** `ctx` com `runtime.plugin_call_timeout` (10 s), `request_id` e `Caller` `{read ou root, usuário}`, como numa página
   - **Erros do handler:** o mesmo mapeamento da página (FDD 08): `ErrNotFound` 404, `ErrBadRequest` 400, prazo 504, outro erro, panic ou `ui.Reply` com erro não nulo 500; o texto do erro só vai para o log
   - **Compatibilidade:** método novo em interface implementada só pela plataforma: minor (FDD 08, contrato 12)
@@ -683,7 +694,7 @@ actions["/../core/x"]: padrão /plugins/n3x/example/../core/x fora de /plugins/n
   ```
 - Método: `POST /plugins/<namespace>/<nome>/<path>`, `Content-Type: application/x-www-form-urlencoded`
 - Semântica de status/headers:
-  - **Por que POST, redirecionamento e GET sem htmx (hipótese):** o envio funciona igual com e sem JavaScript; recarregar a página depois não reenvia; erro de status é página inteira, que o navegador mostra sem configuração do htmx (o htmx 2 não troca respostas 4xx e 5xx); o foco volta ao topo da página e o aviso tem papel de status. A ação é rara no painel (FR-008: só leitura de configs), então o custo da recarga inteira é pequeno. As atualizações parciais continuam no polling, na paginação, na ordenação e nas abas
+  - **Por que POST, redirecionamento e GET sem htmx (confirmado):** o envio funciona igual com e sem JavaScript; recarregar a página depois não reenvia; erro de status é página inteira, que o navegador mostra sem configuração do htmx (o htmx 2 não troca respostas 4xx e 5xx); o foco volta ao topo da página e o aviso tem papel de status. A ação é rara no painel (FR-008: só leitura de configs), então o custo da recarga inteira é pequeno. As atualizações parciais continuam no polling, na paginação, na ordenação e nas abas
   - **`ReadSubmission`:** cada campo reservado aceita no máximo um valor (mais de um é `ErrInvalidQuery`); campos desconhecidos começando com `_` são ignorados (reserva para minor); o restante vai para `NewQuery(params, valores)` com os limites da FDD 08 (`ErrInvalidQuery`, 400). `_return` vale só se começar com `id.RoutePrefix()`, não tiver `//`, `\`, segmento `.` ou `..`, esquema nem caractere de controle e tiver até 2048 bytes
   - **`Finish`:** destino = alvo do `DoneAt` se for página do próprio plugin; senão `Return()`; senão `/`. O aviso guarda o tipo (`done` ou `rejected`), a mensagem (padrão "Ação concluída." ou "Revise os campos destacados."; até 1 KiB), o ID do formulário, até 32 problemas e, só em `Rejected`, os valores enviados para preencher de novo; acima de `MaxFlashBytes`, os valores são descartados e ficam mensagem e problemas
   - **Guarda do aviso (pedido à FDD 34):** um aviso por sessão (o mais novo vence), por até `FlashTTL`, entregue ao renderizador só numa página inteira (sem `HX-Request`, sem `N3X-Refresh`, fora de `ModeExport`) cujo path é igual a `Flash.Path()`, e apagado depois de entregue
@@ -774,18 +785,18 @@ Cache-Control: no-store
 - Método: n/a
 - Semântica:
   - **Estrutura:** `<figure class="n3x-chart n3x-chart--line">` com `<figcaption>` (título visível), o `<svg viewBox="0 0 640 240" role="img" aria-labelledby="<title> <desc>">`, a legenda (`<ul class="n3x-chart__legend">`, omitida com uma série) e a tabela de dados em `<details>` ("Dados do gráfico: <título>"), com `<caption>`, `<th scope="col">` e `<th scope="row">`
-  - **Área e escala (hipótese):** margens de 56 à esquerda, 12 à direita, 12 em cima e 32 embaixo. A escala vai de `min(0, menor valor)` a `max(0, maior valor)`, ou até `YMax`; o passo é o menor "número redondo" (1, 2, 2,5, 5 ou 10 vezes uma potência de 10) maior ou igual a um quarto da faixa, com 3 a 6 marcas. Barra sempre começa no zero. Coordenadas com no máximo uma casa decimal, escritas com `strconv` (ponto decimal, como o SVG exige)
+  - **Área e escala (confirmado):** margens de 56 à esquerda, 12 à direita, 12 em cima e 32 embaixo. A escala vai de `min(0, menor valor)` a `max(0, maior valor)`, ou até `YMax`; o passo é o menor "número redondo" (1, 2, 2,5, 5 ou 10 vezes uma potência de 10) maior ou igual a um quarto da faixa, com 3 a 6 marcas. Barra sempre começa no zero. Coordenadas com no máximo uma casa decimal, escritas com `strconv` (ponto decimal, como o SVG exige)
   - **Linha:** uma `<polyline>` por trecho contínuo; `NaN` quebra a linha; ponto isolado vira `<circle r="3">`. Séries diferenciadas por cor e por tracejado (contínuo, traço, ponto, traço e ponto, traço longo, contínuo grosso), definidos no CSS, então a cor não é a única informação (WCAG 1.4.1)
   - **Barra:** um `<rect>` por valor, agrupado por rótulo; valor negativo desce da linha do zero; `NaN` não desenha nada
   - **Rótulos do eixo X:** no máximo 8 visíveis (um a cada `ceil(n/8)`), cortados em 16 caracteres com "…" no SVG; inteiros na tabela de dados
   - **Limites de dados (aviso, não erro):** linha acima de 200 rótulos fica com os 200 últimos (série temporal); barra acima de 50 fica com os 50 primeiros; os dois com `chart_truncated`. Valor acima de `YMax` é desenhado no topo, com `chart_clipped`, e a tabela mostra o valor real. Valor infinito vira "sem valor", com `chart_value`. `Labels` vazio mostra "Sem dados para o gráfico." sem SVG
   - **Limites de estrutura (erro):** séries acima de 6 (linha) ou 4 (barra) dão `too_many`; nenhuma série dá `too_few`; série com número de valores diferente do de rótulos dá `value_count`; `YMax` negativo ou não finito dá `range`
   - **Resumo automático (`<desc>`):** "Gráfico de linhas com S séries e N rótulos, de <primeiro> a <último>." e, por série, "<nome>: mínimo X em <rótulo>, máximo Y em <rótulo>" mais "; K pontos sem valor" quando houver. Determinístico, formatado por `Format`
-  - **Cores e tema:** só classes (`n3x-chart__s1` a `n3x-chart__s6`, `n3x-chart__grid`, `n3x-chart__axis`, `n3x-chart__zero`), nunca atributo `fill`, `stroke` ou `style`; o tema da FDD 10 ganha os tokens `--n3x-chart-1` a `--n3x-chart-6`, com contraste mínimo de 3:1 contra `--n3x-bg` e `--n3x-surface` nos dois temas (WCAG 1.4.11), conferido pelo teste de contraste do SDK. Grade decorativa; marcas de texto com `--n3x-muted` (4,5:1). Com as classes dos widgets novos (refresh, formulário, confirmação, aviso, gráfico), a folha `ui.Stylesheet()` passa a ter até 32 KiB sem compressão (hipótese; a FDD 10 previa 24 KiB só para os widgets dela)
+  - **Cores e tema:** só classes (`n3x-chart__s1` a `n3x-chart__s6`, `n3x-chart__grid`, `n3x-chart__axis`, `n3x-chart__zero`), nunca atributo `fill`, `stroke` ou `style`; o tema da FDD 10 ganha os tokens `--n3x-chart-1` a `--n3x-chart-6`, com contraste mínimo de 3:1 contra `--n3x-bg` e `--n3x-surface` nos dois temas (WCAG 1.4.11), conferido pelo teste de contraste do SDK. Grade decorativa; marcas de texto com `--n3x-muted` (4,5:1). Com as classes dos widgets novos (refresh, formulário, confirmação, aviso, gráfico), a folha `ui.Stylesheet()` passa a ter até 32 KiB sem compressão (confirmado; a FDD 10 previa 24 KiB só para os widgets dela)
   - **Escape:** título, descrição, rótulos e nomes passam pelo escritor; o SVG não tem `href`, `<use>`, `<image>`, `<a>`, `<foreignObject>`, `<style>` nem `<script>`
-  - **Contingência (HLD do `n3x-sdk`):** `ChartBar` é o último pedaço a ser implementado; se for adiado, entra numa minor, e nenhuma tela do core depende dele (pedido à FDD 45)
+  - **Contingência (HLD do `n3x-sdk`, confirmado):** `ChartBar` fica na v1 e é o último pedaço a ser implementado; se for adiado, entra numa minor, e nenhuma tela do core depende dele (pedido à FDD 45)
 
-Tokens de cor de série (hipótese; o teste de contraste é o portão):
+Tokens de cor de série (confirmado; o teste de contraste é o portão):
 
 | Token | Claro | Escuro |
 | --- | --- | --- |
@@ -844,7 +855,8 @@ ui.Chart{Title: "Negações por período", XLabel: "Horário",
   func ParseFormat(s string) (Format, bool)
 
   // Campos novos de widgets da FDD 10:
-  //   Table.Export []Format // 0 a 2, sem repetição; habilita "Exportar CSV" e "Exportar JSON"
+  //   Table.Export []Format // 0 a 2, sem repetição; habilita "Exportar CSV" e "Exportar JSON" (vazio por padrão: habilitação explícita do formato)
+  //   Table.ExportAllowRead bool // padrão falso: a exportação exige root; verdadeiro libera também para o papel de leitura, por tabela
   //   Code.ID       string  // obrigatório quando Download; único na árvore
   //   Code.Download bool    // habilita "Baixar <formato>" (FR-007, sem JavaScript)
 
@@ -861,10 +873,10 @@ ui.Chart{Title: "Negações por período", XLabel: "Horário",
   ```
 - Método: `GET <path da página>?<query da página>&<id>.export=<valor>`
 - Semântica de status/headers:
-  - **Rota:** a mesma da página, com a chave reservada `<id>.export` (prevista na FDD 10). A sessão, o papel e o prazo (`runtime.plugin_call_timeout`, 10 s) são os da página: quem vê a página exporta o que vê, sem papel próprio. O host escolhe `ModeExport` antes de qualquer regra de fragmento
-  - **O que é exportado (hipótese):** o recorte filtrado e ordenado inteiro, sem paginação: todas as linhas entregues que passam nos filtros `<id>.f.<filtro>` da query, na ordenação `<id>.sort` (ou `Table.Sort`, ou ordem de entrega). Teto: o mesmo `MaxTableRows` (10.000 linhas entregues) da FDD 10, que já não processa mais que isso; acima, `export_unavailable`
+  - **Rota:** a mesma da página, com a chave reservada `<id>.export` (prevista na FDD 10). A sessão e o prazo (`runtime.plugin_call_timeout`, 10 s) são os da página, mas o papel não: quem vê a página NÃO exporta mais por padrão (confirmado). A exportação exige root, a menos que a tabela declare `ExportAllowRead`, que a libera também para leitura; o download de `Code` segue a mesma regra (root por padrão). Motivo: o recorte pode ter dado pessoal em massa (IP e usuário, LGPD) e sairia da retenção de 24 h em memória do core, e a auditoria formal só chega na v2. O host valida no servidor e responde 403 ("Esta exportação exige o papel root.") para leitura sem `ExportAllowRead`, com o log `panel_action_refused` e `reason=forbidden`; o link ou botão só é emitido para quem tem permissão. O PRD (FR-008 e FR-013) precisa registrar isso. O host escolhe `ModeExport` antes de qualquer regra de fragmento
+  - **O que é exportado (confirmado):** o recorte filtrado e ordenado inteiro, sem paginação: todas as linhas entregues que passam nos filtros `<id>.f.<filtro>` da query, na ordenação `<id>.sort` (ou `Table.Sort`, ou ordem de entrega). Teto: o mesmo `MaxTableRows` (10.000 linhas entregues) da FDD 10, que já não processa mais que isso; acima, `export_unavailable`
   - **Valores aceitos:** `Table`: `csv` ou `json`, se estiverem em `Export`. `Code` com `Download`: `yaml` (`CodeYAML`), `json` (`CodeJSON`), `diff` (`CodeDiff`) ou `txt` (`CodePlain`), igual ao `Lang`. Qualquer outro caso dá a página com `export_unavailable`
-  - **Links:** em modo página e fragmento, o renderizador emite os links na barra `n3x-table__tools`, acima da tabela, ou em `n3x-code__tools`, abaixo do código: "Exportar CSV", "Exportar JSON", "Baixar YAML" e assim por diante, com o nome do bloco só para leitor de tela. São links comuns, sem htmx. Não saem em cartão nem com a tabela acima do teto. O renderizador nunca propaga chaves `<id>.export` em outros links, campos ocultos ou no relógio do `Refresh`
+  - **Links:** em modo página e fragmento, e só com `Request.Root` verdadeiro ou `ExportAllowRead` na tabela (`Code`: só root), o renderizador emite os links na barra `n3x-table__tools`, acima da tabela, ou em `n3x-code__tools`, abaixo do código: "Exportar CSV", "Exportar JSON", "Baixar YAML" e assim por diante, com o nome do bloco só para leitor de tela. São links comuns, sem htmx. Não saem em cartão nem com a tabela acima do teto. O renderizador nunca propaga chaves `<id>.export` em outros links, campos ocultos ou no relógio do `Refresh`
   - **Nome do arquivo:** `<namespace>-<nome>-<id>.<ext>` (ex.: `giustech-quota-servicos.csv`), só com `[a-z0-9_-.]`, sem data (saída determinística)
   - **Cabeçalhos que o host escreve com o `Result`:** `200`, `Content-Type: <Result.MediaType>`, `Content-Disposition: attachment; filename="<Result.Filename>"`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`
 
@@ -877,9 +889,9 @@ ui.Chart{Title: "Negações por período", XLabel: "Horário",
 | `CodeDiff` | `text/plain; charset=utf-8` | `.diff` |
 | `CodePlain` | `text/plain; charset=utf-8` | `.txt` |
 
-  - **CSV (hipótese):** RFC 4180 com `encoding/csv` (`UseCRLF`), vírgula, BOM UTF-8 no início (para planilhas reconhecerem os acentos), cabeçalho com os `Label` das colunas, valores de máquina: `IntCell` e `BytesCell` inteiros; `DecimalCell` com ponto e as casas da célula (`NaN` vazio); `DurationCell` em segundos (`strconv.FormatFloat(d.Seconds(), 'f', -1, 64)`); `TimeCell` em RFC 3339 UTC; `BadgeCell` e `LinkCell` pelo rótulo; célula vazia vazia
+  - **CSV (confirmado):** RFC 4180 com `encoding/csv` (`UseCRLF`), vírgula, BOM UTF-8 no início (para planilhas reconhecerem os acentos), cabeçalho com os `Label` das colunas, valores de máquina: `IntCell` e `BytesCell` inteiros; `DecimalCell` com ponto e as casas da célula (`NaN` vazio); `DurationCell` em segundos (`strconv.FormatFloat(d.Seconds(), 'f', -1, 64)`); `TimeCell` em RFC 3339 UTC; `BadgeCell` e `LinkCell` pelo rótulo; célula vazia vazia
   - **Neutralização de fórmulas (OWASP):** toda célula de texto (`TextCell`, `MonoCell`, `BadgeCell`, `LinkCell`) que começa com `=`, `+`, `-`, `@`, tabulação, retorno de carro ou as variantes de largura total `＝`, `＋`, `－` e `＠` ganha o prefixo `'`. Células numéricas e de horário não são tocadas: o SDK as escreve com `strconv` e o formato nunca vira fórmula
-  - **JSON (hipótese):** objeto com `format` (1), `plugin`, `table`, `caption`, `sort` (ou `null`), `filters` (só os preenchidos), `columns` (`key` e `label`), `rows` (objetos com as chaves na ordem das colunas) e `count`; números como número (`NaN` como `null`), duração em segundos, horário em RFC 3339 UTC, texto como texto, célula vazia como `null`; sem neutralização (JSON não é fórmula). Inteiros acima de 2^53 perdem precisão em leitores JavaScript (documentado)
+  - **JSON (confirmado):** objeto com `format` (1), `plugin`, `table`, `caption`, `sort` (ou `null`), `filters` (só os preenchidos), `columns` (`key` e `label`), `rows` (objetos com as chaves na ordem das colunas) e `count`; números como número (`NaN` como `null`), duração em segundos, horário em RFC 3339 UTC, texto como texto, célula vazia como `null`; sem neutralização (JSON não é fórmula). Inteiros acima de 2^53 perdem precisão em leitores JavaScript (documentado). O prefixo `'` do CSV e o JSON são formato para máquina (documentado no guia do autor)
   - **Download de `Code`:** o texto como está (já mascarado pelo plugin), UTF-8 sem BOM
   - **Limites:** saída até `MaxExportBytes` (16 MiB; acima, `ErrOutputTooLarge` sem escrever nada); `ctx` conferido a cada 1.000 linhas
 
@@ -917,7 +929,7 @@ estoque,0,0,'-sem dados,2026-10-20T13:58:12Z
   type Request struct {
       // FDD 10: Mode, Target, Query, Plugin, Card, HeadingBase
       CSRFToken       string        // obrigatório quando a saída tem Form POST ou Action visível
-      Root            bool          // mostra Form POST e Action sem AllowRead
+      Root            bool          // mostra Form POST e Action sem AllowRead, e exportação sem ExportAllowRead
       RefreshInterval time.Duration // panel.refresh_interval; 0 = 5 s; de 1 s a 10 min
       // Novos (FDD 11):
       Path  string // path da página, como o navegador pediu (escapado); obrigatório com POST visível
@@ -953,7 +965,7 @@ estoque,0,0,'-sem dados,2026-10-20T13:58:12Z
       href, action, hx-get = "?..."                         (FDD 10)
       href                 = "#n3x-..."                     (resumo de erros do formulário)
       href, action         = "/plugins/<namespace>/<nome>/..." (PluginPath e PluginPathOf)
-      href                 = "https://..."                  (External, com rel="noopener noreferrer")
+      (sem "https://...": link externo fora da v1)
     method = "get" | "post"; type = hidden | text | search | checkbox | submit
     ```
   - **Envios não usam htmx:** nenhum `<form method="post">` leva atributo `hx-*`; formulário GET também não
@@ -1067,7 +1079,6 @@ fmt.Println(errors.Is(err, ui.ErrInvalidTree), errors.As(err, &fe), fe[0].Rule, 
 - Semântica:
   - **Regras novas do `Lint`:**
     - `form_csrf`: todo `<form method="post">` tem exatamente um `_csrf` e um `_return` ocultos e nenhum atributo `hx-*`
-    - `external_rel`: todo `href` `https://` tem `rel="noopener noreferrer"`
     - `url` (ampliada): só as formas de URL do contrato 9, cada uma no atributo permitido
     - `hx_value`: `hx-trigger` só `every <N>s` com N de 1 a 600; `hx-sync` só `this:drop`; `hx-headers` só a constante; os três só num `<span class="n3x-refresh__tick">`
     - `refresh_pause`: todo bloco com relógio tem o link `n3x-p-<id>-pause`
@@ -1079,14 +1090,13 @@ fmt.Println(errors.Is(err, ui.ErrInvalidTree), errors.As(err, &fe), fe[0].Rule, 
 
 **Exemplo de requisição**
 ```go
-err := uitest.Lint([]byte(`<div><form method="post" action="/plugins/n3x/example/x" hx-post="/x"><button type="submit">Ok</button></form><a href="https://x.exemplo">X</a></div>`))
+err := uitest.Lint([]byte(`<div><form method="post" action="/plugins/n3x/example/x" hx-post="/x"><button type="submit">Ok</button></form></div>`))
 ```
 
 **Exemplo de resposta**
 ```text
 div[1]/form[1]: atributo hx-post não permitido [attr]
 div[1]/form[1]: formulário POST sem _csrf e _return [form_csrf]
-div[1]/a[1]: link externo sem rel="noopener noreferrer" [external_rel]
 ```
 
 ---
@@ -1102,12 +1112,12 @@ div[1]/a[1]: link externo sem rel="noopener noreferrer" [external_rel]
 | Mudança | Versão |
 | --- | --- |
 | Tipo de campo novo, formato de gráfico novo, `ChartKind` novo, `Format` novo | Minor |
-| Construtor novo de `Href` ou de `Reply`, método novo em `Routes` | Minor |
+| Construtor novo de `Href` (ex.: `External`, link externo `https`) ou de `Reply`, método novo em `Routes` | Minor |
 | Campo novo no JSON de exportação | Minor (leitores devem ignorar campo desconhecido) |
 | Afrouxar limite (mais séries, mais pontos, mais `Refresh`, exportação maior) | Minor |
 | Envio por htmx como opção (campo novo, valor zero igual ao atual) | Minor |
 | Mudar a coluna, a ordem ou a codificação do CSV; mudar `format` do JSON; mudar o nome de um campo reservado ou do cabeçalho | Major |
-| Apertar limite; aceitar esquema de URL a menos; mudar o valor zero de `FormMethod`, `AllowRead` ou do papel de `Action` | Major; exceção: correção de segurança em patch, com nota (hipótese, como nas FDDs 05, 06, 08 e 10) |
+| Apertar limite; aceitar esquema de URL a menos; mudar o valor zero de `FormMethod`, `AllowRead` ou do papel de `Action` | Major; exceção: correção de segurança em patch, com nota (confirmado, como nas FDDs 05, 06, 08 e 10) |
 
 **Exemplo de requisição**
 ```text
@@ -1139,10 +1149,11 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 | `Every` fora do piso ou do teto | Intervalo ajustado, `refresh_clamped` | Dado; a tela sai |
 | `Href` com conteúdo inválido | Texto sem link (ou controle omitido), `link_invalid` | Um segmento vazio vindo de dado não derruba a página |
 | Gráfico com pontos demais, valor infinito ou acima de `YMax` | Corte, "sem valor" ou topo, com aviso | Tabela de dados mostra o valor real |
+| Exportação pedida por leitura sem `ExportAllowRead` (ou `Code` por leitura) | Host: 403 "Esta exportação exige o papel root."; link não emitido | Log `panel_action_refused`, `reason=forbidden`; vale mesmo com o link digitado à mão |
 | Exportação pedida e impossível | Página com `export_unavailable` | Tabela fora da árvore, formato não habilitado, acima de 10.000 linhas |
 | Exportação acima de 16 MiB | `ErrOutputTooLarge`; nada escrito | Host responde 422 com orientação de filtrar (pedido à FDD 35) |
 | `ctx` cancelado na exportação | Erro do `ctx`; nada escrito | Host: 504 |
-| Polling com sessão expirada | Host: `HX-Redirect` para o login com `next` | O htmx navega; volta à mesma página depois |
+| Polling com sessão expirada (inatividade; o polling não a renova) | Host: `HX-Redirect` para o login com `next` | O htmx navega; volta à mesma página depois (FR-008) |
 | Polling com erro 4xx ou 5xx | O htmx não troca; dados anteriores ficam | O relógio continua; o host mede em `n3x_controller_panel_refresh_total` |
 | Bloco `Refresh` sumiu da árvore | Página com `Retargeted` | Host manda `HX-Retarget: #n3x-page` |
 | Envio sem sessão | 303 para o login | O envio não é repetido depois |
@@ -1174,7 +1185,8 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 - Nenhum controle de envio sem `AllowRead` sai com `Request.Root` falso
 - Todo envio aceito passou por sessão, CSRF e papel no host antes do handler
 - O intervalo do relógio nunca é menor que `Request.RefreshInterval` nem maior que 10 min; nenhum `hx-headers` sai fora do relógio
-- Toda URL de link é relativa ao painel ou `https://` com `rel="noopener noreferrer"`
+- Toda URL de link é relativa ao painel; a v1 não emite `https://` externo
+- Nenhum link ou botão de exportação sai para quem não tem permissão (leitura sem `ExportAllowRead`; `Code` só para root), e o host recusa o pedido com 403
 - `_return` e `Location` nunca saem do prefixo do plugin, exceto o fallback `/`
 - A exportação nunca leva linha que os filtros da query tirariam, nunca pagina e nunca passa de 10.000 linhas
 - Nenhuma célula de texto do CSV começa com caractere de fórmula sem `'`
@@ -1187,7 +1199,7 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 
 **Métricas**
 - O SDK não publica métricas (biblioteca pura, FDD 10). O que ele mede volta no `Result` (`Rows`, `Bytes`, `Notices`, `Mode`) e no `Flash.Bytes()`
-- Métricas propostas ao host, publicadas pela FDD 35 em `17091` (hipótese):
+- Métricas propostas ao host, publicadas pela FDD 35 em `17091` (confirmado):
 
 | Métrica | Tipo | Rótulos | Fonte |
 | --- | --- | --- | --- |
@@ -1198,7 +1210,7 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 | `n3x_controller_panel_refresh_total` | counter | `plugin`, `result` (`ok`, `expired`, `error`) | requisições com `N3X-Refresh` |
 | `n3x_controller_panel_render_notices_total` (FDD 10) | counter | `plugin`, `kind` (ganha os 6 avisos novos) | `Result.Notices` |
 
-- A exportação não entra em `n3x_controller_panel_duration_seconds{route}`, para o p95 de 300 ms continuar medindo telas interativas; o polling entra, porque é renderização de tela (hipótese). Envio e página com o mesmo padrão somam na mesma série de `n3x_controller_panel_requests_total{route,status}`; a FDD 35 decide se esse par ganha o rótulo `method` (pedido)
+- A exportação não entra em `n3x_controller_panel_duration_seconds{route}`, para o p95 de 300 ms continuar medindo telas interativas; o polling entra, porque é renderização de tela (confirmado). Envio e página com o mesmo padrão somam na mesma série de `n3x_controller_panel_requests_total{route,status}`; a FDD 35 decide se esse par ganha o rótulo `method` (pedido)
 - Cardinalidade por plugin: até 32 rotas de ação vezes 9 resultados, 5 formatos vezes 5 resultados, 3 resultados de polling, 12 tipos de aviso. Nenhum rótulo com path real, valor de curinga, usuário, ID de tabela ou valor de campo
 
 **Logs** (host, JSON com `component=panel`; nomes propostos à FDD 35)
@@ -1236,15 +1248,15 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 | `plugin/` (FDD 01) | mesma versão do SDK | `ID`, `RoutePrefix`, `FieldError`, `FieldErrors` |
 | `controller/ui` (FDD 10) | mesma versão do SDK | Escritor, contextos, IDs, `Table`, `Code`, `Query`, `Request`, `Result`, tema, `uitest` |
 | `controller/` (pacote `ctrl`, FDD 08) | mesma versão do SDK | Recebe `Routes.Action`, `ActionFunc`, `ActionEntry`, `Registrar.Actions` |
-| htmx | 2.0.x (hipótese, FDD 10) | Gatilho `every`, `hx-sync`, `hx-headers` com JSON puro, cabeçalhos `HX-Request`, `HX-Target`, `HX-Current-URL`, `HX-Redirect`, `HX-Retarget`, `HX-Reswap`; sem `eval`, sem estilos de indicador, sem `hx-on` |
+| htmx | 2.0.x (confirmado, FDD 10) | Gatilho `every`, `hx-sync`, `hx-headers` com JSON puro, cabeçalhos `HX-Request`, `HX-Target`, `HX-Current-URL`, `HX-Redirect`, `HX-Retarget`, `HX-Reswap`; sem `eval`, sem estilos de indicador, sem `hx-on` |
 | `n3x-controller` `host/session` (FDD 34) | compilado com o SDK do binário | CSRF, aviso de uso único, polling sem renovar a inatividade, sessão expirada no polling |
 | `n3x-controller` `host/panel` (FDD 35) | compilado com o SDK do binário | Rotas POST, modos, cabeçalhos, métricas e logs, axe nas páginas novas da galeria |
 | Kit `sdktest` (FDD 12) | mesma versão do SDK | Envio, exportação e polling simulados com `ReadSubmission`, `Finish` e `ActionTargets` |
 | axe-core | a da CI do controller | Galeria nos dois temas |
-| Navegadores | os da FDD 10 (hipótese) | `<details>`, SVG inline, `inputmode`, `Content-Disposition` |
+| Navegadores | os da FDD 10 (confirmado) | `<details>`, SVG inline, `inputmode`, `Content-Disposition` |
 
 **Garantias de compatibilidade**
-- Tudo entra por adição sobre as FDDs 08 e 10: widgets novos, campos novos com valor zero igual ao comportamento anterior (`Table.Export` vazio, `Code.Download` falso, `Request.Path` e `Request.Flash` vazios, `Result.MediaType` vazio), modo novo e método novo em `Routes`, que só a plataforma implementa
+- Tudo entra por adição sobre as FDDs 08 e 10: widgets novos, campos novos com valor zero igual ao comportamento anterior (`Table.Export` vazio, `Table.ExportAllowRead` falso, `Code.Download` falso, `Request.Path` e `Request.Flash` vazios, `Result.MediaType` vazio), modo novo e método novo em `Routes`, que só a plataforma implementa
 - Os golden da FDD 10 não mudam: nenhum widget dela muda de marcação fora dos casos novos (tabela com `Export`, controles dentro de `Refresh`)
 - `go list -deps ./controller/ui ./controller/ui/uitest` continua só com biblioteca padrão, `plugin/` e pacotes de `controller/ui`
 - Host e SDK andam juntos (o host é compilado com o SDK do binário), então campos reservados, cabeçalho e modos são sempre da mesma versão nos dois lados
@@ -1255,7 +1267,7 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 
 ### 9. Critérios de aceite técnicos
 
-- **Escape (fuzzing):** `FuzzHref` (segmentos, chaves, valores e URL externa), `FuzzFormText` (rótulos, ajudas, valores, confirmação), `FuzzChart` (títulos, rótulos, nomes e valores, inclusive `NaN`, infinitos e extremos), `FuzzSubmission` (corpo urlencoded) e `FuzzExportCell` rodam 5 minutos por alvo na CI noturna, sem panic e sem falha de propriedade; o corpus inicial inclui `<script>`, `"><a href=x>`, `javascript:`, `=cmd|' /C calc'!A0`, `＝1`, U+0000, U+202E e UTF-8 inválido (hipótese de duração, igual às FDDs anteriores)
+- **Escape (fuzzing):** `FuzzHref` (segmentos, chaves e valores), `FuzzFormText` (rótulos, ajudas, valores, confirmação), `FuzzChart` (títulos, rótulos, nomes e valores, inclusive `NaN`, infinitos e extremos), `FuzzSubmission` (corpo urlencoded) e `FuzzExportCell` rodam 5 minutos por alvo na CI noturna, sem panic e sem falha de propriedade; o corpus inicial inclui `<script>`, `"><a href=x>`, `javascript:`, `=cmd|' /C calc'!A0`, `＝1`, U+0000, U+202E e UTF-8 inválido (confirmado, duração igual à das FDDs anteriores)
 - **Propriedade do CSV:** para todo texto `s` numa célula de texto, o campo lido de volta com `encoding/csv` começa com `'` exatamente quando `s` começa com um dos 10 caracteres de fórmula, e `strings.TrimPrefix(campo, "'")` devolve `s` nesses casos; `IntCell(-5)` sai `-5`
 - **CSP e Lint:** `uitest.Lint` sem problemas em todos os golden e nas 14 páginas novas da galeria; uma busca nesses arquivos não acha `<script`, ` style=`, ` on` seguido de letras e `=`, `hx-on`, `hx-post`, `javascript:`, `http://`, nem `href` dentro de `svg`
 - **Golden:** pelo menos um arquivo para `Refresh` ativo e pausado (página e fragmento), cada tipo de `Href` e o inválido, `LinkCell`, `Form` POST com os 5 tipos de campo, `Form` GET, `Form` recusado, `Action` com e sem `Confirm`, controle oculto para leitura, aviso concluído, `Chart` de linha (com lacuna e ponto isolado), `Chart` de barra (com negativo e topo cortado), gráfico vazio, exportação CSV e JSON da mesma tabela e download de `Code`; 100 renderizações seguidas dão os mesmos bytes
@@ -1265,8 +1277,8 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 - **Registro (L-53):** o exemplo do contrato 5 gera exatamente as 3 linhas; `Action` com papel zero gera `ActionEntry.Role == RoleRoot`; `Page` e `Action` no mesmo padrão são aceitos; 33 ações dão `too_many`
 - **Envio:** `ReadSubmission` tira `_csrf`, `_form` e `_return` da entrada; `_csrf` repetido dá `ErrInvalidQuery`; `_return` com `//`, `..`, esquema ou fora do prefixo dá `Return() == ""` e destino `/`; `DoneAt` para outro plugin cai no `_return`; aviso acima de 16 KiB perde os valores e mantém mensagem e problemas
 - **Chart:** escala do exemplo com marcas 0, 20, 40 e 60; 201 rótulos dão 200 e `chart_truncated`; 51 barras dão 50; `YMax` 100 com valor 130 dá `chart_clipped` e a tabela com 130; `+Inf` dá `chart_value`; os 6 tokens de série passam no teste de contraste (3:1 contra `--n3x-bg` e `--n3x-surface`, nos dois temas); o SVG não tem atributo `fill`, `stroke` nem `style`; a folha de estilo tem até 32 KiB, sem `@import`, `url(` nem `expression(`
-- **Exportação:** exporta todas as linhas filtradas (não só a página): com 437 linhas, filtro que deixa 412 e `PageSize` 50, o CSV tem 412 linhas de dados; ordem igual à da query; BOM, CRLF e cabeçalho com os rótulos; JSON lido de volta por `encoding/json` com `count` igual ao número de linhas; 10.001 linhas entregues dão `export_unavailable`; saída acima de 16 MiB dá `ErrOutputTooLarge` com 0 bytes; `ctx` cancelado devolve o erro com 0 bytes; `Filename` e `MediaType` iguais à tabela do contrato 8; cartão não tem link de exportação
-- **Desempenho** (benchmarks com `-benchmem` e `-count=10`, mediana, no executor padrão da CI, hipóteses):
+- **Exportação:** exporta todas as linhas filtradas (não só a página): com 437 linhas, filtro que deixa 412 e `PageSize` 50, o CSV tem 412 linhas de dados; ordem igual à da query; BOM, CRLF e cabeçalho com os rótulos; JSON lido de volta por `encoding/json` com `count` igual ao número de linhas; 10.001 linhas entregues dão `export_unavailable`; saída acima de 16 MiB dá `ErrOutputTooLarge` com 0 bytes; `ctx` cancelado devolve o erro com 0 bytes; `Filename` e `MediaType` iguais à tabela do contrato 8; cartão não tem link de exportação; com `Root` falso e `ExportAllowRead` falso, a saída não tem link de exportação (nem de download de `Code`), e com `ExportAllowRead` verdadeiro o link de `Table` sai para leitura; o host real e o host falso respondem 403 à exportação por leitura sem `ExportAllowRead` e 200 com ele
+- **Desempenho** (benchmarks com `-benchmem` e `-count=10`, mediana, no executor padrão da CI, confirmado):
   - B5: `Chart` de linha com 6 séries de 200 pontos, até 1 ms por operação e até 40 alocações
   - B6: `Chart` de barra com 4 séries de 50 rótulos, até 0,5 ms por operação
   - B7: exportação CSV de 10.000 linhas por 8 colunas, até 30 ms por operação
@@ -1275,8 +1287,8 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 - **Acessibilidade no navegador** (CI do controller, FDD 35): o axe com `wcag2a`, `wcag2aa`, `wcag21a` e `wcag21aa` não acha violações nas 14 páginas novas da galeria, nos dois temas; a confirmação por `<details>` abre e envia só com teclado (teste de navegador da FDD 35)
 - **Dependências:** `go list -deps ./controller/ui ./controller/ui/uitest` só com biblioteca padrão, `plugin/` e pacotes de `controller/ui`; `go vet` e `go test -race ./controller/...` passam
 - **Superfície:** golden de `go doc -all` de `./controller`, `./controller/ui` e `./controller/ui/uitest` igual ao versionado
-- **Cobertura:** no mínimo 90% de linhas nos arquivos novos de `controller/ui` (hipótese, igual às FDDs anteriores)
-- **Critérios do PRD (com as FDDs 12, 13, 34, 35 e 48):** a página do `n3x.example` com `Refresh` e exportação funciona no host falso e no painel real; POST sem token CSRF válido é recusado com 403; usuário de leitura que envia uma ação de root recebe 403 com "Esta ação exige o papel root."; polling depois da sessão expirada leva ao login e, depois dele, à mesma página
+- **Cobertura:** no mínimo 90% de linhas nos arquivos novos de `controller/ui` (confirmado, igual às FDDs anteriores)
+- **Critérios do PRD (com as FDDs 12, 13, 34, 35 e 48):** a página do `n3x.example` com `Refresh` e exportação funciona no host falso e no painel real; POST sem token CSRF válido é recusado com 403; usuário de leitura que envia uma ação de root recebe 403 com "Esta ação exige o papel root."; o polling não renova a inatividade da sessão (aba aberta sem uso cai no login após o prazo) e, depois do login, o operador volta à mesma página; leitura não exporta por padrão (403), e exporta só nas tabelas com `ExportAllowRead`
 
 ---
 
@@ -1314,12 +1326,13 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 
 ### Polling mantendo a sessão viva
 
-- **Probabilidade:** alta, se nada for feito
-- **Impacto:** a expiração por 30 min sem uso (ADR-006 do `n3x-controller`) nunca acontece com uma aba aberta, e uma estação abandonada continua com sessão de root
-- **Mitigação:**
-    - Cabeçalho `N3X-Refresh` só no relógio; o host não renova a inatividade com ele (pedido à FDD 34)
-    - Sessão expirada no polling leva ao login e de volta à mesma página (FR-008)
-- **Plano de contingência:** se a FDD 34 precisar atender à WCAG 2.2.1 (aviso antes de expirar), um banner do host antes da expiração, sem mudar o SDK
+- **Probabilidade:** alta, se nada for feito (decisão aprovada: o polling não renova a sessão)
+- **Impacto:** a expiração por 30 min sem uso (ADR-006 do `n3x-controller`) nunca aconteceria com uma aba aberta, e uma estação abandonada continuaria com sessão de root
+- **Mitigação (confirmado):**
+    - Cabeçalho `N3X-Refresh: 1` só no relógio; o host não renova a inatividade com ele (requisito novo para a FDD 34, em outro repositório). A aba aberta cai no login após o prazo de inatividade
+    - Sessão expirada no polling leva ao login (`HX-Redirect`) e de volta à mesma página, garantido pelo FR-008
+    - Esclarecimento para o PRD: a sessão expira por inatividade e o polling não conta como atividade
+- **Plano de contingência:** se a FDD 34 precisar atender à WCAG 2.2.1 (aviso antes de expirar), um banner do host antes da expiração, sem mudar o SDK; se o operador reclamar de cair no login com o painel à vista, avaliar em minor um prazo de inatividade configurável, sem mudar o contrato do SDK
 
 ### Comportamento do htmx diferente do esperado (`every`, `hx-sync`, `hx-headers`, herança, CSP)
 
@@ -1334,12 +1347,14 @@ Plugin A (compilado contra 1.0.0) usa Chart de linha; plugin B usa ChartBar.
 ### Exportação expondo dado pessoal em massa (LGPD)
 
 - **Probabilidade:** média
-- **Impacto:** IP e usuário saem do painel em arquivo, fora do controle de retenção de 24 h do core
-- **Mitigação:**
-    - Exportação só onde o plugin habilita (`Export` vazio por padrão) e só com o papel da página
+- **Impacto:** IP e usuário saem do painel em arquivo, fora do controle de retenção de 24 h em memória do core; a auditoria formal só chega na v2 (FR-010)
+- **Mitigação (confirmado):**
+    - Exportação só onde o plugin habilita (`Export` vazio por padrão) e, por padrão, só para root: `Table.ExportAllowRead` (padrão falso) libera a leitura tabela a tabela, e o download de `Code` segue a mesma regra
+    - O link ou botão só é emitido para quem tem permissão, e o host valida no servidor (403 para leitura sem `ExportAllowRead`)
     - `Cache-Control: no-store` e log `panel_export` com quem exportou
-    - Pedido à FDD 45 para decidir a exportação do inventário com IP; guia do autor (FDD 47)
-- **Plano de contingência:** em minor, exclusão de coluna da exportação; até lá, o plugin tira a coluna ou o `Export`
+    - Pedido à FDD 45 para decidir a exportação do inventário com IP; guia do autor (FDD 47) recomenda não ligar `ExportAllowRead` em tabela com dado pessoal
+    - O PRD (FR-008 e FR-013) precisa registrar que leitura não exporta por padrão
+- **Plano de contingência:** em minor, exclusão de coluna da exportação e limite de taxa; até lá, o plugin tira a coluna ou o `Export`
 
 ### Token CSRF vazado (compressão, cache do navegador ou histórico do htmx)
 

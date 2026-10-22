@@ -1,6 +1,6 @@
 # ADR-021: Contrato estável desde a v1.0 e política de depreciação
 
-Status: Aceito
+Status: Aceito (atualizado em 2026-10-22)
 Data: 2026-10-19
 
 ## Contexto
@@ -24,3 +24,9 @@ Todos os plugins dependem do SDK. Avaliou-se lançar as APIs ainda não maduras 
 
 ## Requisitos relacionados
 FR-012, FR-013 e FR-015; compatibilidade nos requisitos não funcionais.
+
+## Atualização (2026-10-22)
+Decisões aprovadas na clarificação das FDDs SDK-01 a SDK-16:
+- A regra da série `0.x` (quebra permitida entre minors) vale também para a checagem de schema da config do PLUGIN (mesma linha = mesma minor), além da faixa `sdk`
+- `chain/` e os demais pacotes de plataforma seguem o semver do módulo, mas ficam fora do contrato de plugin. Isso qualifica "Todos os pacotes são estáveis desde a `v1.0.0`"
+- Módulos aninhados (`example/` etc.) têm tags próprias com prefixo

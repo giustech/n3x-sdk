@@ -106,6 +106,15 @@ Consumidores:
 - Rotação com duas chaves ao mesmo tempo e rotação sem restart: fora da v1 (README, "Fora da v1")
 - Cache de valores decifrados: fora por decisão (seção 4)
 
+**Decisões aprovadas na clarificação**
+- A AAD dos valores do `n3x.yaml` do controller é `n3x:v1:controller:<plugin_id>`, um escopo por seção de plugin (L-05)
+- `n3x encrypt --service` e `n3x-controller encrypt --plugin` são obrigatórios e o escopo nunca é inferido do `n3x.yaml`
+- Os valores de desempenho, tamanho, permissão de chave (`0440` bit a bit), duração de fuzzing e cobertura marcados como hipótese ficam aceitos como padrão, sem bloqueio
+
+**Pendências não bloqueantes**
+- Dependem de outros repositórios: uso de `Verifier` no entrypoint e `Opener` no `.so` (FDDs 15 e 17), `secret_unexpected` nos hosts (FDDs 15 e 30), mascaramento `***:plain`/`***:<impressão digital>` e evento `secret_in_clear` (FDDs 37 e 42), análise estática de `secret/` e `.Reveal()` (FDD 24) e varredura da CI (FDD 48)
+- Divergência a tratar no Workflow 3: o PRD FR-001 diz que o entrypoint "decifra" os valores `ENC[...]`, mas esta FDD faz o entrypoint só conferir (`Verifier`, sem criar `string`) e o `.so` decifrar
+
 ---
 
 ### 4. Fluxos detalhados e diagramas
@@ -356,7 +365,7 @@ type Redis struct {
   - Cifra: AES-256-GCM, nonce aleatório de 96 bits por cifragem (implementação sugerida: `cipher.NewGCMWithRandomNonce`, cujo leiaute é o da carga v1). Cifrar o mesmo valor duas vezes dá envelopes diferentes (trade-off do ADR-006 do `n3x-plugin-core`)
   - Tamanhos: envelope de 48 caracteres (0 bytes) a 87.428 caracteres (64 KiB); carga decodificada de 28 a 65.564 bytes
   - **Escopo do sidecar:** `n3x:v1:<service>` para todo `ENC[...]` do `n3x.yaml` do serviço, inclusive `controller.secret` (ADR-014; decisão tomada). `ServiceScope` recusa serviço vazio, com mais de 253 bytes, com `:` ou com byte fora de ASCII visível (0x21 a 0x7E)
-  - **Escopo do controller (L-05):** `n3x:v1:controller:<plugin_id>` para cada valor da seção `plugins["<id>"]`, com o ID do plugin dono da seção (hipótese). Motivos:
+  - **Escopo do controller (L-05):** `n3x:v1:controller:<plugin_id>` para cada valor da seção `plugins["<id>"]`, com o ID do plugin dono da seção (confirmado). Motivos:
     - o controller não tem `service` e há um controller por ambiente (ADR-001 do `n3x-sdk`)
     - nenhum nome de serviço tem `:`, então as AADs de serviço e de controller nunca coincidem, mesmo com a mesma chave
     - um valor da seção de um plugin não abre se for copiado para a seção de outro (ex.: a `session.hmac_key` do core colada na config de um plugin de terceiro que a logaria)
@@ -570,8 +579,8 @@ O `tokens[1]` em claro é aceito (`InClear()`), e o `password` abre normalmente.
   ```
 - Método: processo, stdin e stdout
 - Semântica:
-  - `--service` e `--plugin` são obrigatórios (hipótese). Sem eles, o CLI recusa com erro de uso, porque um envelope sem escopo explícito não abriria em lugar nenhum
-  - Não há leitura do serviço a partir do `n3x.yaml`: uma forma só, que funciona na CI sem o arquivo (hipótese)
+  - `--service` e `--plugin` são obrigatórios (confirmado). Sem eles, o CLI recusa com erro de uso, porque um envelope sem escopo explícito não abriria em lugar nenhum
+  - Não há leitura do serviço a partir do `n3x.yaml`: uma forma só, que funciona na CI sem o arquivo (confirmado)
   - O segredo vem só do stdin; a saída é uma linha com o envelope. Recomendações para as FDDs 15 e 30: remover uma única quebra de linha final (`\n` ou `\r\n`), recusar entrada vazia, recusar acima de 64 KiB, zerar o buffer com `Wipe` e nunca ecoar a entrada
   - O `credential new <serviço>` do controller continua imprimindo o segredo para o operador cifrar no lado do sidecar com `n3x encrypt --service <serviço>`; imprimir o envelope direto com `--key` é decisão da FDD 30
   - Os códigos de saída e o texto de uso são das FDDs 15 e 30

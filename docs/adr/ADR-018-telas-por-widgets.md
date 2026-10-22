@@ -1,6 +1,6 @@
 # ADR-018: Telas de plugin como árvore de widgets, sem HTML
 
-Status: Aceito
+Status: Aceito (atualizado em 2026-10-22)
 Data: 2026-10-19
 
 ## Contexto
@@ -28,3 +28,15 @@ O PRD previa telas de plugin como componentes templ. Assim, cada autor escreveri
 
 ## Requisitos relacionados
 FR-008, FR-011 e FR-013; acessibilidade e segurança do painel.
+
+## Atualização (2026-10-22)
+Decisões aprovadas na clarificação das FDDs SDK-01 a SDK-16:
+- `Cards.Add(id, papel, fn CardFunc)` substitui `c.Add(id, widget)`. A função é chamada com prazo de 1 s e atualização
+- O renderizador escreve HTML direto no SDK (sem templ no SDK; templ só no host). Isso substitui "O templ fica só dentro do SDK e do host"
+- O catálogo da v1 ganha `Pipeline` (com `Stage`) e `Code` com texto, YAML, JSON e diff (antes, só YAML e diff)
+- `ui.Column` é só layout; a coluna de tabela é `ui.TableColumn`. `Stat.Value` é string. `Table` e `Refresh` exigem `ID`
+- `Table.Export` é vazio por padrão; exportar exige root, e `ExportAllowRead` libera a leitura. `ui.External` não existe na v1
+- O polling não renova a sessão. Horas em UTC. Listas acima dos limites são truncadas com o aviso `list_truncated`
+- Controles de paginação, ordenação e filtro têm IDs estáveis, e há `role=status`/`aria-live`
+- `Form` e `Action` têm `AllowRead bool` no widget e o papel em `Routes.Action` (papel zero = root)
+- Widget novo continua entrando por minor, mas `Pipeline` e as ampliações acima entraram na própria v1

@@ -57,6 +57,17 @@ Se o entrypoint aceitar uma config que o `.so` recusa, o container passa na vali
   - **L-34 aplicada:** caminhos de erro e de `Walk` seguem a convenção da FDD 01, agora também em código (`PathKey` e `PathIndex`)
   - **Apoio à L-07 (fechada na FDD 37):** `Normalize` e `MaskSecrets` preservam o texto `ENC[...]` recebido, que é o que a impressão digital exige
 
+**Decisões aprovadas na clarificação**
+- A tag `desc` é obrigatória em todo campo da config (`desc_missing` no build quando faltar)
+- A tag `json` é obrigatória, explícita e em snake_case (`^[a-z][a-z0-9_]{0,63}$`); campo sem ela falha com `json_name`
+- Formatos confirmados: duração só como texto Go (`200ms`; número é recusado) com forma canônica de `time.Duration.String()`; tamanho em base 1024 com `Ki`/`Mi`/`Gi`/`Ti` ou `KiB`/`MiB`/`GiB`/`TiB`, ou inteiro em bytes, com sufixos decimais (`k`, `M`, `G`, `KB`, `MB`) recusados
+- O código de build `N3X-B014` (config do plugin sem schema válido) é aceito; a faixa de códigos do PRD FR-015 passa a ser `N3X-B001` a `N3X-B014` e o PRD deve ser ajustado. A confirmação final do código continua na FDD 21 do `n3x-builder`
+- O pacote `schemagen` fica no módulo do SDK (`github.com/giustech/n3x-sdk/schemagen`, só biblioteca padrão e `plugin/`); o HLD do `n3x-sdk` precisa listar `schemagen/` (e `yamlconv/`, da FDD 01) na árvore de pacotes
+
+**Pendências não bloqueantes**
+- Seguem como hipótese: dialeto JSON Schema 2020-12, limites numéricos (config de 1 MiB, schema de 256 KiB, profundidade 32, chave de map de 1 a 128 caracteres, corpus de 200 entradas, orçamentos de 500 µs e 50 ms, fuzzing de 5 minutos, cobertura de 90%), regras por item de lista fora da v1 e o conjunto de flags e o prazo de 60 s do programa auxiliar do build
+- Dependem de outros repositórios: execução do `schemagen` e embutimento no manifesto (FDDs 21 e 22), comparação byte a byte do schema no `.so` (FDDs 15 e 17) e uso de `ParseSchema`/`Validate` no entrypoint e no controller (FDDs 15 e 30)
+
 ---
 
 ### 2. Objetivos técnicos
@@ -234,11 +245,11 @@ flowchart TD
   ```
 - Método: n/a (lido por reflexão em `SchemaOf`)
 - Semântica:
-  - `json`: todo campo exportado precisa de tag `json` com nome explícito em snake_case (hipótese). `omitempty` é aceito e ignorado; a opção `string` é recusada. Campo com `json:"-"` e campo não exportado ficam fora do schema e mantêm o valor zero
+  - `json`: todo campo exportado precisa de tag `json` com nome explícito em snake_case (confirmado). `omitempty` é aceito e ignorado; a opção `string` é recusada. Campo com `json:"-"` e campo não exportado ficam fora do schema e mantêm o valor zero
   - `required`: a chave precisa estar presente. Não combina com `default` nem com ponteiro
   - `min` e `max`: valor numérico para inteiros e `float64` (`minimum` e `maximum`); quantidade de caracteres Unicode para texto (`minLength` e `maxLength`); quantidade de itens para lista (`minItems` e `maxItems`); quantidade de entradas para map (`minProperties` e `maxProperties`); duração no formato Go para `time.Duration` (`min=1ms`); tamanho para `plugin.Size` (`max=10Mi`)
   - `enum`: só em texto e inteiro; valores separados por `|`, sem `,` nem `|` dentro do valor, sem repetição, na ordem escrita
-  - `desc`: obrigatória, porque o painel mostra nome e descrição de cada campo (FR-007) (hipótese). Texto simples; o renderizador escapa
+  - `desc`: obrigatória, porque o painel mostra nome e descrição de cada campo (FR-007) (confirmado). Texto simples; o renderizador escapa
   - `default`: só em texto, inteiro, `float64`, `bool`, duração e tamanho. Precisa passar nas regras do próprio campo
   - Tag desconhecida fora de `json`, `n3x`, `desc` e `default` é ignorada (pode ser de outra biblioteca); opção desconhecida dentro de `n3x` é erro
   - Regras não expressáveis por tag (dependência entre campos, formato de URL) ficam no `New` do plugin ou no `Validate` do controller
@@ -366,8 +377,8 @@ type Exemplo struct {
   ```
 - Método: n/a
 - Semântica:
-  - **Duração:** o SDK não cria `plugin.Duration`; o gerador reconhece `time.Duration` pelo tipo e o trata como texto no formato Go (`200ms`, `1m30s`, `0`), aceito por `time.ParseDuration`. Negativo é recusado (`min`, com mínimo implícito `0s`). Número JSON é recusado (`type`), porque `5` não diz a unidade. Forma canônica: `time.Duration.String()` (`1m0s`, `50ms`, `0s`) (hipótese)
-  - **Tamanho:** texto com inteiro decimal sem sinal e sufixo opcional `Ki`, `Mi`, `Gi`, `Ti` (Kubernetes, como `256Mi` no `n3x.yaml` do sidecar) ou `KiB`, `MiB`, `GiB`, `TiB` (IEC, como `128MiB` no `n3x.yaml` do controller), sempre base 1024. Também aceita número JSON inteiro, em bytes. Recusa sufixos decimais (`k`, `M`, `G`, `KB`, `MB`), fração e sinal, para não haver dúvida entre 1000 e 1024 (hipótese)
+  - **Duração:** o SDK não cria `plugin.Duration`; o gerador reconhece `time.Duration` pelo tipo e o trata como texto no formato Go (`200ms`, `1m30s`, `0`), aceito por `time.ParseDuration`. Negativo é recusado (`min`, com mínimo implícito `0s`). Número JSON é recusado (`type`), porque `5` não diz a unidade. Forma canônica: `time.Duration.String()` (`1m0s`, `50ms`, `0s`) (confirmado)
+  - **Tamanho:** texto com inteiro decimal sem sinal e sufixo opcional `Ki`, `Mi`, `Gi`, `Ti` (Kubernetes, como `256Mi` no `n3x.yaml` do sidecar) ou `KiB`, `MiB`, `GiB`, `TiB` (IEC, como `128MiB` no `n3x.yaml` do controller), sempre base 1024. Também aceita número JSON inteiro, em bytes. Recusa sufixos decimais (`k`, `M`, `G`, `KB`, `MB`), fração e sinal, para não haver dúvida entre 1000 e 1024 (confirmado)
   - Forma canônica de `Size`: o maior sufixo entre `Ti`, `Gi`, `Mi` e `Ki` que divide o valor exatamente; senão, os bytes em decimal; zero é `"0"`
   - Estouro de `int64` é `format`
   - As FDDs 15 e 30 devem usar `ParseDuration` e `ParseSize` nos campos de duração e tamanho do próprio `n3x.yaml`, para a plataforma ter um formato só (recomendação)
